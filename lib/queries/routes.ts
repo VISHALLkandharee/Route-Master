@@ -213,3 +213,32 @@ export function useSendSMS() {
     },
   })
 }
+
+
+
+export function useStartDay() {
+  const supabase = createClient()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (date: string) => {
+      const { error: userError } = await supabase.auth.getUser()
+      if (userError) throw new Error('Your session expired. Please log in again.')
+
+      const { error } = await supabase
+        .from('routes')
+        .update({
+          status: 'in_progress',
+          started_at: new Date().toISOString(),
+        })
+        .eq('scheduled_date', date)
+
+      if (error) throw error
+    },
+    onSuccess: (_, date) => {
+      queryClient.invalidateQueries({ queryKey: routesQueryKey(date) })
+      toast.success('Day started! Navigate to your first stop.')
+    },
+    onError: () => toast.error('Failed to start day'),
+  })
+}

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
@@ -40,19 +41,25 @@ export function SidebarNav({ collapsed, onNavigate }: SidebarNavProps) {
         const Icon = item.icon
 
         return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onNavigate}
-            title={collapsed ? item.label : undefined}
-            className={cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150',
-              isActive
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-              collapsed && 'justify-center px-2'
-            )}
-          >
+    <Link
+      key={item.href}
+      href={item.href}
+      onClick={(e) => {
+        if (isActive) {
+          e.preventDefault()
+              return
+        }
+    onNavigate?.()
+  }}
+  title={collapsed ? item.label : undefined}
+  className={cn(
+    'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150',
+    isActive
+      ? 'bg-blue-50 text-blue-700 cursor-default'
+      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+    collapsed && 'justify-center px-2'
+  )}
+>
             <Icon className="w-5 h-5 flex-shrink-0" />
             {!collapsed && <span>{item.label}</span>}
           </Link>

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
-import dynamic from "next/dynamic";
 import { format, addDays, subDays, parseISO } from "date-fns";
+import dynamic from "next/dynamic";
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,16 +17,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useUIStore } from "@/lib/store/ui-store";
-import { useJobsByDate } from "@/lib/queries/jobs";
+import { useJobsByDate, useUpdateJobStatus } from "@/lib/queries/jobs";
 import {
   useRouteByDate,
   useOptimizeRoute,
   useLastStartLocation,
   useSendSMS,
+  useStartDay,
+  routesQueryKey,
 } from "@/lib/queries/routes";
 import { MessageSquare } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { StartLocationInput } from "@/components/dashboard/routes/start-location-input";
+import { useQueryClient } from "@tanstack/react-query";
 
 const STEP_ICONS: Record<string, string> = {
   geocoding: "📍",
@@ -99,6 +102,35 @@ const RouteMap = dynamic(
   },
 );
 
+// function openNavigation(address: string) {
+//   const encoded = encodeURIComponent(address)
+//   // Opens in Google Maps on Android, Apple Maps on iOS, Google Maps in browser
+//   const url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`
+//   window.open(url, '_blank')
+// }
+
+function openNavigation(address: string) {
+  const encoded = encodeURIComponent(address);
+  const ua = navigator.userAgent;
+
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isAndroid = /Android/.test(ua);
+
+  if (isIOS) {
+    // Opens Apple Maps app directly on iPhone/iPad
+    window.location.href = `maps://maps.apple.com/?daddr=${encoded}&dirflg=d`;
+  } else if (isAndroid) {
+    // Opens Google Maps app directly on Android
+    window.location.href = `https://maps.google.com/maps?daddr=${encoded}&dirflg=d`;
+  } else {
+    // Desktop — opens Google Maps in new tab
+    window.open(
+      `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`,
+      "_blank",
+    );
+  }
+}
+
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
@@ -106,6 +138,9 @@ export default function RoutesPage() {
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
   const sendSMS = useSendSMS();
+  const startDay = useStartDay();
+  const updateStatus = useUpdateJobStatus();
+  const queryClient = useQueryClient();
 
   const [startLocation, setStartLocation] = useState("");
 
@@ -331,40 +366,161 @@ export default function RoutesPage() {
         </div>
       )}
 
-      {/* Job order list */}
+      {/* Active Job + Job List */}
       {sortedJobs.length > 0 && (
         <div className="space-y-3">
-          {sortedJobs.map((job, index) => (
-            <div
-              key={job.id}
-              className="bg-white border border-gray-100 rounded-xl p-4 flex items-center gap-4"
-            >
-              <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                {orderedJobIds.length > 0 ? index + 1 : "–"}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-gray-900 truncate">
-                  {job.title}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {job.client?.full_name} · {job.address}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {job.sms_sent && (
-                  <Badge
-                    variant="outline"
-                    className="bg-green-50 text-green-700 border-green-200"
-                  >
-                    SMS ✓
-                  </Badge>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Today&apos;s Stops</h2>
+            {route?.status === "optimized" && (
+              <Button
+                size="sm"
+                onClick={() => startDay.mutate(selectedDate)}
+                disabled={startDay.isPending}
+              >
+                {startDay.isPending ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  "Start Day"
                 )}
-                <Badge variant="outline">
-                  {job.scheduled_time.slice(0, 5)}
-                </Badge>
-              </div>
-            </div>
-          ))}
+              </Button>
+            )}
+          </div>
+
+          {sortedJobs.map((job, index) => {
+            const isCompleted = job.status === "completed";
+            const isCancelled = job.status === "cancelled";
+            const isCurrent =
+              route?.status === "in_progress" &&
+              !isCompleted &&
+              !isCancelled &&
+              sortedJobs
+                .slice(0, index)
+                .every(
+                  (j) => j.status === "completed" || j.status === "cancelled",
+                );
+
+            return (
+              <motion.div
+                key={job.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+                className={`bg-white border rounded-xl p-4 transition-all ${
+                  isCurrent
+                    ? "border-blue-400 shadow-md shadow-blue-100 ring-2 ring-blue-100"
+                    : isCompleted
+                      ? "border-green-100 bg-green-50/30 opacity-70"
+                      : isCancelled
+                        ? "border-gray-100 opacity-50"
+                        : "border-gray-100"
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  {/* Stop number */}
+                  <div
+                    className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
+                      isCompleted
+                        ? "bg-green-600 text-white"
+                        : isCurrent
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {isCompleted ? (
+                      <CheckCircle2 className="w-5 h-5" />
+                    ) : orderedJobIds.length > 0 ? (
+                      index + 1
+                    ) : (
+                      "–"
+                    )}
+                  </div>
+
+                  {/* Job info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p
+                        className={`font-semibold truncate ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}
+                      >
+                        {job.title}
+                      </p>
+                      {isCurrent && (
+                        <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">
+                          Current Stop
+                        </span>
+                      )}
+                      {job.sms_sent && (
+                        <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
+                          SMS ✓
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {job.client?.full_name} · {job.address}
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Badge variant="outline" className="text-xs">
+                      {job.scheduled_time.slice(0, 5)}
+                    </Badge>
+
+                    {!isCompleted && !isCancelled && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                        onClick={() => openNavigation(job.address)}
+                      >
+                        <Navigation className="w-3.5 h-3.5 mr-1" />
+                        Navigate
+                      </Button>
+                    )}
+
+                    {isCurrent && (
+                      <Button
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700"
+                        onClick={() => {
+                          updateStatus.mutate({
+                            id: job.id,
+                            status: "completed",
+                            date: job.scheduled_date,
+                          });
+                        }}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                        Done
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+
+          {/* All done */}
+          {sortedJobs.every(
+            (j) => j.status === "completed" || j.status === "cancelled",
+          ) &&
+            sortedJobs.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-green-50 border border-green-200 rounded-xl p-6 text-center"
+              >
+                <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto mb-2" />
+                <p className="font-semibold text-green-800">
+                  All jobs complete!
+                </p>
+                <p className="text-sm text-green-600 mt-1">
+                  Great work today. See you tomorrow.
+                </p>
+              </motion.div>
+            )}
         </div>
       )}
     </div>
