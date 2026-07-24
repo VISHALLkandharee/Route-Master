@@ -48,6 +48,7 @@ export function useJobsByDate(date: string | null) {
   return useQuery({
     queryKey: jobsQueryKey(date ?? ''),
     enabled: !!date,
+    staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<Job[]> => {
       const { data, error } = await supabase
         .from('jobs')
@@ -55,9 +56,12 @@ export function useJobsByDate(date: string | null) {
         .eq('scheduled_date', date)
         .is('deleted_at', null)
         .order('order_index', { ascending: true })
-.order('scheduled_time', { ascending: true })
+        .order('scheduled_time', { ascending: true })
 
-      if (error) throw error
+      if (error) {
+        console.error('Error fetching jobs by date:', error)
+        throw error
+      }
       return data as unknown as Job[]
     },
   })
@@ -102,15 +106,19 @@ export function useCreateJob() {
         .select('*, client:clients(id, full_name, phone)')
         .single()
 
-      if (error) throw error
+      if (error) {
+        console.error('Error creating job:', error)
+        throw error
+      }
       return data
     },
     onSuccess: (data: Job) => {
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(data.scheduled_date) })
       toast.success('Job added successfully')
     },
-    onError: () => {
-      toast.error('Failed to add job')
+    onError: (err: Error) => {
+      console.error('Create job error:', err)
+      toast.error(err.message || 'Failed to add job')
     },
   })
 }
@@ -141,15 +149,19 @@ export function useUpdateJob() {
         .select('*, client:clients(id, full_name, phone)')
         .single()
 
-      if (error) throw error
+      if (error) {
+        console.error('Error updating job:', error)
+        throw error
+      }
       return data
     },
     onSuccess: (data: Job) => {
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(data.scheduled_date) })
       toast.success('Job updated successfully')
     },
-    onError: () => {
-      toast.error('Failed to update job')
+    onError: (err: Error) => {
+      console.error('Update job error:', err)
+      toast.error(err.message || 'Failed to update job')
     },
   })
 }
@@ -168,11 +180,14 @@ export function useUpdateJobStatus() {
       const { error: userError } = await supabase.auth.getUser()
       if (userError) throw new Error('Your session expired. Please log in again.')
 
-const updates: Record<string, unknown> = { status }
-updates.completed_at = status === 'completed' ? new Date().toISOString() : null
+      const updates: Record<string, unknown> = { status }
+      updates.completed_at = status === 'completed' ? new Date().toISOString() : null
 
       const { error } = await supabase.from('jobs').update(updates).eq('id', id)
-      if (error) throw error
+      if (error) {
+        console.error('Error updating job status:', error)
+        throw error
+      }
     },
     onMutate: async ({ id, status, date }) => {
       const key = jobsQueryKey(date)
@@ -193,11 +208,12 @@ updates.completed_at = status === 'completed' ? new Date().toISOString() : null
 
       return { previous, key }
     },
-    onError: (_err, _vars, context) => {
+    onError: (err: Error, _vars, context) => {
+      console.error('Update job status error:', err)
       if (context?.previous && context?.key) {
         queryClient.setQueryData(context.key, context.previous)
       }
-      toast.error('Failed to update job')
+      toast.error(err.message || 'Failed to update job')
     },
     onSuccess: () => {
       toast.success('Job updated')
@@ -224,7 +240,10 @@ export function useDeleteJob() {
         .update({ deleted_at: new Date().toISOString() })
         .eq('id', id)
 
-      if (error) throw error
+      if (error) {
+        console.error('Error deleting job:', error)
+        throw error
+      }
     },
     onMutate: async ({ id, date }) => {
       const key = jobsQueryKey(date)
@@ -235,11 +254,12 @@ export function useDeleteJob() {
 
       return { previous, key }
     },
-    onError: (_err, _vars, context) => {
+    onError: (err: Error, _vars, context) => {
+      console.error('Delete job error:', err)
       if (context?.previous && context?.key) {
         queryClient.setQueryData(context.key, context.previous)
       }
-      toast.error('Failed to delete job')
+      toast.error(err.message || 'Failed to delete job')
     },
     onSuccess: () => {
       toast.success('Job deleted')

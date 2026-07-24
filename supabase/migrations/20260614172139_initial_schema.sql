@@ -37,9 +37,12 @@ CREATE TABLE users (
   subscription_status       TEXT NOT NULL DEFAULT 'trial' CHECK (
                               subscription_status IN (
                                 'trial',
+                                'trialing',
                                 'active',
                                 'past_due',
-                                'cancelled'
+                                'cancelled',
+                                'unpaid',
+                                'incomplete'
                               )
                             ),
   trial_ends_at             TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '14 days',

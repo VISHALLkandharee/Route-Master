@@ -14,6 +14,7 @@ import {
   ChevronRight,
   CheckCircle2,
   Clock,
+  Play,
   AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -160,7 +161,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
   pending: <Clock className="w-3 h-3" />,
-  in_progress: <Clock className="w-3 h-3" />,
+  in_progress: <Play className="w-3 h-3" />,
   completed: <CheckCircle2 className="w-3 h-3" />,
 };
 
@@ -239,8 +240,9 @@ export default function DashboardPage() {
                       : "bg-blue-50 border-blue-100 text-blue-700"
                 }`}
               >
-                <span className="font-semibold">{daysLeft} days</span> left in
-                trial
+                <span className="font-semibold">
+                  {daysLeft <= 0 ? "Trial expired" : `${daysLeft} days left in trial`}
+                </span>
               </motion.div>
             )}
         </div>

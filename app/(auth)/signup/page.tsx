@@ -95,7 +95,7 @@ export default function SignupPage() {
   // ─── Submit ─────────────────────────────────────────────────
 
   const onSubmit = async (data: SignupFormData) => {
-    const { error } = await supabase.auth.signUp({
+    const { data: authData, error } = await supabase.auth.signUp({
       email: data.email,
       password: data.password,
       options: {
@@ -106,6 +106,20 @@ export default function SignupPage() {
     if (error) {
       triggerShake();
       toast.error(error.message);
+      return;
+    }
+
+    // Supabase returns no error for existing emails when confirmation is off
+    // but identities array is empty — detect this
+    if (
+      authData.user &&
+      authData.user.identities &&
+      authData.user.identities.length === 0
+    ) {
+      triggerShake();
+      toast.error(
+        "An account with this email already exists. Please sign in instead.",
+      );
       return;
     }
 

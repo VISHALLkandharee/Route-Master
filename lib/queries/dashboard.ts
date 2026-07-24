@@ -4,6 +4,15 @@ import { format } from 'date-fns'
 
 export const dashboardQueryKey = ['dashboard'] as const
 
+export interface UpcomingJob {
+  id: string
+  title: string
+  scheduled_time: string
+  status: string
+  client_name: string
+  address: string
+}
+
 export interface DashboardStats {
   profile: {
     full_name: string
@@ -16,14 +25,16 @@ export interface DashboardStats {
   activeClients: number
   lowStockCount: number
   revenueToday: number
-  upcomingJobs: {
-    id: string
-    title: string
-    scheduled_time: string
-    status: string
-    client_name: string
-    address: string
-  }[]
+  upcomingJobs: UpcomingJob[]
+}
+
+interface RawUpcomingJob {
+  id: string
+  title: string
+  scheduled_time: string
+  status: string
+  address: string
+  client: { full_name: string } | null
 }
 
 export function useDashboardStats() {
@@ -32,6 +43,7 @@ export function useDashboardStats() {
 
   return useQuery({
     queryKey: [...dashboardQueryKey, today],
+    staleTime: 60 * 1000,
     queryFn: async (): Promise<DashboardStats> => {
       const [
         profileResult,
@@ -89,12 +101,18 @@ export function useDashboardStats() {
           .limit(3),
       ])
 
+      if (profileResult.error) {
+        console.error('Error fetching dashboard profile:', profileResult.error)
+      }
+
       const revenueToday = (revenueResult.data ?? []).reduce(
-        (sum, job) => sum + (job.price ?? 0),
+        (sum: number, job: { price: number | null }) => sum + (job.price ?? 0),
         0
       )
 
-      const upcomingJobs = (upcomingResult.data ?? []).map((job: any) => ({
+      const upcomingRaw = (upcomingResult.data ?? []) as unknown as RawUpcomingJob[]
+
+      const upcomingJobs: UpcomingJob[] = upcomingRaw.map((job) => ({
         id: job.id,
         title: job.title,
         scheduled_time: job.scheduled_time,
@@ -104,7 +122,12 @@ export function useDashboardStats() {
       }))
 
       return {
-        profile: profileResult.data!,
+        profile: profileResult.data ?? {
+          full_name: 'User',
+          business_name: null,
+          subscription_status: 'trial',
+          trial_ends_at: new Date().toISOString(),
+        },
         jobsToday: jobsTodayResult.count ?? 0,
         completedToday: completedTodayResult.count ?? 0,
         activeClients: clientsResult.count ?? 0,
