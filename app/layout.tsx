@@ -19,6 +19,9 @@ const inter = Inter({
 // ─── Metadata ─────────────────────────────────────────────────
 
 export const metadata: Metadata = {
+    metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || 'https://routemaster.vercel.app'
+  ),
   title: {
     default: "Routemaster — Route Optimization for Mobile Service Pros",
     template: "%s | Routemaster",
@@ -39,11 +42,11 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://routemaster.app",
+    description:
+      "Route optimization, automated SMS, and supply tracking for mobile service professionals.",
+    url: process.env.NEXT_PUBLIC_APP_URL || "https://routemaster.vercel.app",
     siteName: "Routemaster",
     title: "Routemaster — Route Optimization for Mobile Service Pros",
-    description:
-      "Automatically optimize your daily driving route, text clients arrival times, and track supplies. Built for mobile groomers, pool cleaners, and detailers.",
     images: [
       {
         url: "/og-image.png",
@@ -57,7 +60,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Routemaster — Route Optimization for Mobile Service Pros",
     description:
-      "Automatically optimize your daily driving route, text clients arrival times, and track supplies.",
+      "Route optimization, automated SMS, and supply tracking for mobile service professionals.",
     images: ["/og-image.png"],
   },
   robots: {

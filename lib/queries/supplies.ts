@@ -17,6 +17,18 @@ export interface Supply {
   updated_at: string
 }
 
+
+export interface SupplyLog {
+  id: string
+  supply_id: string
+  job_id: string
+  quantity: number
+  notes: string | null
+  created_at: string
+  supply: { name: string; unit: string }
+  job: { title: string; scheduled_date: string }
+}
+
 export interface SupplyInput {
   name: string
   description?: string
@@ -216,5 +228,35 @@ export function useLogSupplyUsage() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to log supply usage'),
+  })
+}
+
+
+
+export function useSupplyLogs(supplyId?: string) {
+  const supabase = createClient()
+
+  return useQuery({
+    queryKey: ['supply_logs', supplyId ?? 'all'],
+    queryFn: async (): Promise<SupplyLog[]> => {
+      let query = supabase
+        .from('supply_logs')
+        .select(`
+          id, supply_id, job_id, quantity, notes, created_at,
+          supply:supplies(name, unit),
+          job:jobs(title, scheduled_date)
+        `)
+        .order('created_at', { ascending: false })
+        .limit(50)
+
+      if (supplyId) {
+        query = query.eq('supply_id', supplyId)
+      }
+
+      const { data, error } = await query
+      if (error) throw error
+      return data as unknown as SupplyLog[]
+    },
+    staleTime: 2 * 60 * 1000,
   })
 }

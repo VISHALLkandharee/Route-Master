@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { format, addDays, subDays, parseISO } from "date-fns";
+import { useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -81,6 +82,14 @@ export default function JobsPage() {
   if (!selectedDate) {
     return null;
   }
+
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get("new") === "true") {
+      setFormOpen(true);
+    }
+  }, [searchParams]);
 
   const dateObj = parseISO(selectedDate);
   const todayStr = format(new Date(), "yyyy-MM-dd");

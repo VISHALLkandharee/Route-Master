@@ -241,7 +241,9 @@ export default function DashboardPage() {
                 }`}
               >
                 <span className="font-semibold">
-                  {daysLeft <= 0 ? "Trial expired" : `${daysLeft} days left in trial`}
+                  {daysLeft <= 0
+                    ? "Trial expired"
+                    : `${daysLeft} days left in trial`}
                 </span>
               </motion.div>
             )}
@@ -402,8 +404,31 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
+              ) : data?.activeClients === 0 ? (
+                /* Brand new user — no clients yet */
+                <div className="text-center py-6">
+                  <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                    <Users className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-900 mb-1">
+                    Welcome to Routemaster!
+                  </p>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Start by adding your first client, then schedule a job and
+                    optimize your route.
+                  </p>
+                  <div className="space-y-2">
+                    <Link href="/dashboard/clients">
+                      <Button size="sm" className="w-full">
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Add your first client
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
               ) : data?.upcomingJobs.length === 0 ? (
-                <div className="text-center py-8">
+                /* Has clients but no jobs today */
+                <div className="text-center py-6">
                   <Briefcase className="w-10 h-10 text-gray-200 mx-auto mb-3" />
                   <p className="text-sm text-gray-400 mb-3">
                     No upcoming jobs today
@@ -466,7 +491,7 @@ export default function DashboardPage() {
                   {
                     label: "Add Job",
                     icon: <Briefcase className="w-5 h-5" />,
-                    href: "/dashboard/jobs",
+                    href: "/dashboard/jobs?new=true",
                     color:
                       "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-100",
                   },

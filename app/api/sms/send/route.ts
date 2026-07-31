@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateSMSMessage } from '@/lib/sms/generate-message'
 import { sendSMS } from '@/lib/sms/sender'
+import { rateLimit } from '@/lib/rate-limit'
 
 interface ClientRecord {
   id: string
@@ -28,6 +29,22 @@ export async function POST(request: NextRequest) {
   if (userError || !userData.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+
+  const userId = userData.user.id;  
+
+  const { success } = rateLimit(`sms:${userId}`, {
+    windowMs: 60 * 1000,  // 1 minute
+    max: 5,               // 5 SMS sends per minute per user
+  })
+
+  if (!success) {
+  return NextResponse.json(
+     { error: 'Too many requests. Please wait before sending SMS again.' },
+      { status: 429 }
+    )
+  }
+
 
   const { date } = await request.json()
   if (!date) {

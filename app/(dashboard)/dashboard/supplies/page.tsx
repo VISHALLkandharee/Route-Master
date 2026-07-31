@@ -23,6 +23,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +51,9 @@ import { SupplyFormSheet } from "@/components/dashboard/supplies/supply-form-she
 import { RestockDialog } from "@/components/dashboard/supplies/restock-dialog";
 import { LogUsageSheet } from "@/components/dashboard/supplies/log-usage-sheet";
 
+import { useSupplyLogs } from "@/lib/queries/supplies";
+import { History } from "lucide-react";
+import { format } from "date-fns";
 const UNIT_SHORT: Record<string, string> = {
   ml: "ml",
   l: "L",
@@ -63,6 +75,10 @@ export default function SuppliesPage() {
   const [restockSupply, setRestockSupply] = useState<Supply | null>(null);
   const [deletingSupply, setDeletingSupply] = useState<Supply | null>(null);
   const [logUsageOpen, setLogUsageOpen] = useState(false);
+
+  // supply logs stats
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const { data: logs } = useSupplyLogs();
 
   const lowStockCount = supplies?.filter((s) => s.is_low_stock).length ?? 0;
 
@@ -105,6 +121,20 @@ export default function SuppliesPage() {
             <ClipboardList className="w-4 h-4 mr-1.5" />
             Log Usage
           </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+              <History className="w-4 h-4 mr-1.5" />
+              History
+            </Button>
+            <Button variant="outline" onClick={() => setLogUsageOpen(true)}>
+              <ClipboardList className="w-4 h-4 mr-1.5" />
+              Log Usage
+            </Button>
+            <Button onClick={openAdd}>
+              <Plus className="w-4 h-4 mr-1.5" />
+              Add Supply
+            </Button>
+          </div>
           <Button onClick={openAdd}>
             <Plus className="w-4 h-4 mr-1.5" />
             Add Supply
@@ -337,6 +367,46 @@ export default function SuppliesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Supply Log History Sheet */}
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Supply Usage History</SheetTitle>
+          </SheetHeader>
+          <div className="px-4 space-y-3">
+            {!logs || logs.length === 0 ? (
+              <div className="text-center py-12">
+                <History className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+                <p className="text-sm text-gray-400">No usage logged yet</p>
+              </div>
+            ) : (
+              logs.map((log) => (
+                <div
+                  key={log.id}
+                  className="bg-gray-50 rounded-xl p-4 flex items-start gap-3"
+                >
+                  <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Package className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {(log.supply as any)?.name ?? "Unknown supply"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {log.quantity} {(log.supply as any)?.unit} used ·{" "}
+                      {(log.job as any)?.title ?? "Unknown job"}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {format(new Date(log.created_at), "MMM d, yyyy h:mm a")}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

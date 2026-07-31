@@ -405,12 +405,12 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mx-auto">
             {STEPS.map((step, i) => (
               <FadeUp key={step.number} delay={i * 0.12}>
-                <div className="text-center relative">
+                <div className="text-center">
                   <div className="w-14 h-14 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-bold text-lg mx-auto mb-4">
                     {step.number}
                   </div>
                   {i < STEPS.length - 1 && (
-                    <div className="hidden md:block absolute top-7 left-full w-full h-0.5 bg-blue-100 -translate-x-1/2" />
+                    <div className="hidden md:block absolute top-7 left-full w-full h-0.5 bg-blue-100" />
                   )}
                   <h3 className="font-semibold text-gray-900 mb-2">
                     {step.title}

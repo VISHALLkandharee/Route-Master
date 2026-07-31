@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { geocodeAddress } from '@/lib/ors/geocode'
 import { optimizeRoute } from '@/lib/ors/optimize'
 import { getDirections } from '@/lib/ors/directions'
+import { rateLimit } from '@/lib/rate-limit'
+
 
 interface JobRow {
   id: string
@@ -37,6 +39,22 @@ export async function POST(request: NextRequest) {
           return
         }
         const userId = userData.user.id
+
+        const { success } = rateLimit(`optimize:${userId}`, {
+          windowMs: 60 * 1000,
+          max: 10,
+        }) 
+
+
+if (!success) {
+  send({
+    step: 'error',
+    message: 'Too many requests. Please wait a moment before optimizing again.',
+  })
+  controller.close()
+  return
+}
+
 
         if (!date) {
           send({ step: 'error', message: 'A date is required.' })
