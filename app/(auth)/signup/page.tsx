@@ -109,8 +109,6 @@ export default function SignupPage() {
       return;
     }
 
-    // Supabase returns no error for existing emails when confirmation is off
-    // but identities array is empty — detect this
     if (
       authData.user &&
       authData.user.identities &&
@@ -123,9 +121,24 @@ export default function SignupPage() {
       return;
     }
 
+    // Check if we got a session back
+    // If email confirmation is OFF → session exists → redirect immediately
+    // If email confirmation is ON → no session → show email message
+    if (!authData.session) {
+      setIsSuccess(true);
+      toast.success("Check your email to confirm your account!");
+      return;
+    }
+
     setIsSuccess(true);
     toast.success("Account created successfully!");
-    setTimeout(() => router.push("/onboarding"), 1500);
+
+    // Use window.location instead of router.push
+    // This forces a full page navigation so auth cookies
+    // are properly sent with the next server request
+    setTimeout(() => {
+      window.location.href = "/onboarding";
+    }, 1000);
   };
 
   // ─── Render ─────────────────────────────────────────────────

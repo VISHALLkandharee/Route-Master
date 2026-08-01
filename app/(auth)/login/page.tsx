@@ -1,28 +1,28 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { motion, AnimatePresence } from 'framer-motion'
-import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { toast } from 'sonner'
-import { Eye, EyeOff, Loader2, MapPin } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { motion, AnimatePresence } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { toast } from "sonner";
+import { Eye, EyeOff, Loader2, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
 
 // ─── Zod Schema ───────────────────────────────────────────────
 
 const loginSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
-  password: z.string().min(1, 'Password is required'),
-})
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
+});
 
-type LoginFormData = z.infer<typeof loginSchema>
+type LoginFormData = z.infer<typeof loginSchema>;
 
 // ─── Animation Variants ───────────────────────────────────────
 
@@ -36,22 +36,22 @@ const pageVariants = {
       ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
     },
   },
-}
+};
 
 const errorVariants = {
   hidden: { opacity: 0, y: -4, height: 0 },
-  visible: { opacity: 1, y: 0, height: 'auto', transition: { duration: 0.2 } },
+  visible: { opacity: 1, y: 0, height: "auto", transition: { duration: 0.2 } },
   exit: { opacity: 0, height: 0, transition: { duration: 0.15 } },
-}
+};
 
 // ─── Component ────────────────────────────────────────────────
 
 export default function LoginPage() {
-  const router = useRouter()
-  const supabase = createClient()
+  const router = useRouter();
+  const supabase = createClient();
 
-  const [showPassword, setShowPassword] = useState(false)
-  const [shake, setShake] = useState(false)
+  const [showPassword, setShowPassword] = useState(false);
+  const [shake, setShake] = useState(false);
 
   const {
     register,
@@ -59,13 +59,13 @@ export default function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: '', password: '' },
-  })
+    defaultValues: { email: "", password: "" },
+  });
 
   const triggerShake = () => {
-    setShake(true)
-    setTimeout(() => setShake(false), 400)
-  }
+    setShake(true);
+    setTimeout(() => setShake(false), 400);
+  };
 
   // ─── Submit ─────────────────────────────────────────────────
 
@@ -73,49 +73,53 @@ export default function LoginPage() {
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: data.email,
       password: data.password,
-    })
+    });
 
     if (signInError) {
-      triggerShake()
+      triggerShake();
       toast.error(
-        signInError.message === 'Invalid login credentials'
-          ? 'Incorrect email or password'
-          : signInError.message
-      )
-      return
+        signInError.message === "Invalid login credentials"
+          ? "Incorrect email or password"
+          : signInError.message,
+      );
+      return;
     }
 
     // Determine where to send them based on onboarding status
     const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('onboarding_completed')
-      .single()
+      .from("users")
+      .select("onboarding_completed")
+      .single();
 
     if (profileError) {
-      toast.error('Something went wrong loading your profile')
-      return
+      toast.error("Something went wrong loading your profile");
+      return;
     }
 
-    toast.success('Welcome back!')
+    toast.success("Welcome back!");
 
-    if (profile.onboarding_completed) {
-      router.push('/dashboard')
+    if (!profile || !profile.onboarding_completed) {
+      window.location.href = "/onboarding";
     } else {
-      router.push('/onboarding')
+      window.location.href = "/dashboard";
     }
-  }
+  };
 
   // ─── Render ─────────────────────────────────────────────────
 
   return (
     <motion.div variants={pageVariants} initial="hidden" animate="visible">
-
       {/* Logo + Heading */}
       <div className="text-center mb-8">
         <motion.div
           initial={{ scale: 0, rotate: -10 }}
           animate={{ scale: 1, rotate: 0 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 18, delay: 0.15 }}
+          transition={{
+            type: "spring",
+            stiffness: 300,
+            damping: 18,
+            delay: 0.15,
+          }}
           className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center
                      justify-center mx-auto mb-4 shadow-lg shadow-blue-200"
         >
@@ -149,7 +153,6 @@ export default function LoginPage() {
         <Card className="border-gray-100 shadow-sm">
           <CardContent className="p-6">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-
               {/* Email */}
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email Address</Label>
@@ -158,11 +161,11 @@ export default function LoginPage() {
                   type="email"
                   placeholder="jake@grooming.com"
                   autoComplete="email"
-                  {...register('email')}
+                  {...register("email")}
                   className={
                     errors.email
-                      ? 'border-red-400 focus-visible:ring-red-400'
-                      : ''
+                      ? "border-red-400 focus-visible:ring-red-400"
+                      : ""
                   }
                 />
                 <AnimatePresence>
@@ -194,14 +197,14 @@ export default function LoginPage() {
                 <div className="relative">
                   <Input
                     id="password"
-                    type={showPassword ? 'text' : 'password'}
+                    type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     autoComplete="current-password"
-                    {...register('password')}
+                    {...register("password")}
                     className={`pr-10 ${
                       errors.password
-                        ? 'border-red-400 focus-visible:ring-red-400'
-                        : ''
+                        ? "border-red-400 focus-visible:ring-red-400"
+                        : ""
                     }`}
                   />
                   <button
@@ -211,10 +214,11 @@ export default function LoginPage() {
                                text-gray-400 hover:text-gray-600
                                transition-colors duration-150"
                   >
-                    {showPassword
-                      ? <EyeOff className="w-4 h-4" />
-                      : <Eye className="w-4 h-4" />
-                    }
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
                   </button>
                 </div>
                 <AnimatePresence>
@@ -234,18 +238,21 @@ export default function LoginPage() {
 
               {/* Submit */}
               <div className="pt-1">
-                <Button type="submit" disabled={isSubmitting} className="w-full">
+                <Button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full"
+                >
                   {isSubmitting ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       Signing in...
                     </>
                   ) : (
-                    'Sign In →'
+                    "Sign In →"
                   )}
                 </Button>
               </div>
-
             </form>
           </CardContent>
         </Card>
@@ -258,7 +265,7 @@ export default function LoginPage() {
         transition={{ delay: 0.4 }}
         className="text-center text-sm text-gray-500 mt-6"
       >
-        Don&apos;t have an account?{' '}
+        Don&apos;t have an account?{" "}
         <Link
           href="/signup"
           className="text-blue-600 font-medium hover:underline underline-offset-4"
@@ -266,7 +273,6 @@ export default function LoginPage() {
           Sign up
         </Link>
       </motion.p>
-
     </motion.div>
-  )
+  );
 }
