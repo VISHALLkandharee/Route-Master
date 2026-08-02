@@ -126,19 +126,11 @@ export default function SuppliesPage() {
               <History className="w-4 h-4 mr-1.5" />
               History
             </Button>
-            <Button variant="outline" onClick={() => setLogUsageOpen(true)}>
-              <ClipboardList className="w-4 h-4 mr-1.5" />
-              Log Usage
-            </Button>
             <Button onClick={openAdd}>
               <Plus className="w-4 h-4 mr-1.5" />
               Add Supply
             </Button>
           </div>
-          <Button onClick={openAdd}>
-            <Plus className="w-4 h-4 mr-1.5" />
-            Add Supply
-          </Button>
         </div>
       </div>
 
