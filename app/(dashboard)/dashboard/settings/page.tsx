@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -43,6 +44,7 @@ import {
   useUpdateProfile,
   useUpdateNotificationPreferences,
 } from "@/lib/queries/profile";
+import { PageTransition } from "@/components/dashboard/page-transition";
 
 // ─── Schema ───────────────────────────────────────────────────
 
@@ -168,7 +170,7 @@ function SectionHeading({
 
 // ─── Main component ────────────────────────────────────────────
 
-export default function SettingsPage() {
+function SettingsPageContent() {
   const router = useRouter();
   const supabase = createClient();
   const { data: profile, isLoading } = useProfile();
@@ -257,523 +259,554 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
-      {showUpgradePrompt && (
+    <PageTransition>
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+        {showUpgradePrompt && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3"
+          >
+            <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <ShieldAlert className="w-4 h-4 text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-red-800">
+                Your trial has expired
+              </p>
+              <p className="text-xs text-red-600 mt-0.5">
+                Upgrade below to continue using Routemaster
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3"
+          transition={{ duration: 0.4 }}
         >
-          <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-            <ShieldAlert className="w-4 h-4 text-red-600" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-red-800">
-              Your trial has expired
-            </p>
-            <p className="text-xs text-red-600 mt-0.5">
-              Upgrade below to continue using Routemaster
-            </p>
-          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+          <p className="text-gray-500 mt-1">
+            Manage your profile and account preferences
+          </p>
         </motion.div>
-      )}
 
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-500 mt-1">
-          Manage your profile and account preferences
-        </p>
-      </motion.div>
+        {/* ── Section 1: Profile ── */}
+        <motion.div
+          custom={0}
+          variants={sectionVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <Card className="border-gray-100">
+            <CardContent className="p-6">
+              <SectionHeading
+                icon={<User className="w-4 h-4" />}
+                title="Personal Information"
+                description="Your name and contact details"
+              />
 
-      {/* ── Section 1: Profile ── */}
-      <motion.div
-        custom={0}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="border-gray-100">
-          <CardContent className="p-6">
-            <SectionHeading
-              icon={<User className="w-4 h-4" />}
-              title="Personal Information"
-              description="Your name and contact details"
-            />
-
-            {isLoading ? (
-              <div className="space-y-4">
-                {[...Array(2)].map((_, i) => (
-                  <div key={i} className="space-y-1.5">
-                    <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
-                    <div className="h-10 bg-gray-100 rounded-xl animate-pulse" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <form
-                onSubmit={handleSubmit(onSaveProfile)}
-                className="space-y-4"
-              >
-                <div className="space-y-1.5">
-                  <Label htmlFor="full_name">Full Name</Label>
-                  <Input
-                    id="full_name"
-                    {...register("full_name")}
-                    className={errors.full_name ? "border-red-400" : ""}
-                  />
-                  {errors.full_name && (
-                    <p className="text-red-500 text-xs">
-                      {errors.full_name.message}
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="phone">Phone Number</Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    {...register("phone")}
-                    className={errors.phone ? "border-red-400" : ""}
-                  />
-                  {errors.phone && (
-                    <p className="text-red-500 text-xs">
-                      {errors.phone.message}
-                    </p>
-                  )}
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={!isDirty || updateProfile.isPending}
-                  className="w-full"
-                >
-                  {updateProfile.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Save Personal Info"
-                  )}
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* ── Section 2: Business ── */}
-      <motion.div
-        custom={1}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="border-gray-100">
-          <CardContent className="p-6">
-            <SectionHeading
-              icon={<Briefcase className="w-4 h-4" />}
-              title="Business Information"
-              description="Your business name, type, and timezone"
-            />
-
-            {isLoading ? (
-              <div className="space-y-4">
-                {[...Array(3)].map((_, i) => (
-                  <div key={i} className="space-y-1.5">
-                    <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
-                    <div className="h-10 bg-gray-100 rounded-xl animate-pulse" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <form
-                onSubmit={handleSubmit(onSaveProfile)}
-                className="space-y-4"
-              >
-                <div className="space-y-1.5">
-                  <Label htmlFor="business_name">Business Name</Label>
-                  <Input
-                    id="business_name"
-                    {...register("business_name")}
-                    className={errors.business_name ? "border-red-400" : ""}
-                  />
-                  {errors.business_name && (
-                    <p className="text-red-500 text-xs">
-                      {errors.business_name.message}
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="business_type">Business Type</Label>
-                  <Controller
-                    name="business_type"
-                    control={control}
-                    render={({ field }) => (
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                      >
-                        <SelectTrigger id="business_type" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(BUSINESS_TYPE_LABELS).map(
-                            ([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="timezone">Timezone</Label>
-                  <Controller
-                    name="timezone"
-                    control={control}
-                    render={({ field }) => (
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                      >
-                        <SelectTrigger id="timezone" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-64">
-                          {getTimezoneList(profile?.timezone ?? "UTC").map(
-                            (tz) => (
-                              <SelectItem key={tz} value={tz}>
-                                {tz}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={!isDirty || updateProfile.isPending}
-                  className="w-full"
-                >
-                  {updateProfile.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Save Business Info"
-                  )}
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* ── Section 3: Notifications ── */}
-      <motion.div
-        custom={2}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="border-gray-100">
-          <CardContent className="p-6">
-            <SectionHeading
-              icon={<Bell className="w-4 h-4" />}
-              title="Notification Preferences"
-              description="Choose what you want to be notified about"
-            />
-
-            <div className="space-y-5">
-              {[
-                {
-                  key: "job_reminders",
-                  label: "Job Reminders",
-                  description:
-                    "Get reminded about upcoming jobs scheduled for today",
-                },
-                {
-                  key: "email_summary",
-                  label: "Daily Email Summary",
-                  description:
-                    "Receive a summary of the day's completed jobs by email",
-                },
-                {
-                  key: "sms_alerts",
-                  label: "SMS Alerts",
-                  description:
-                    "Receive SMS notifications about job cancellations or changes",
-                },
-              ].map((item, i) => (
-                <div key={item.key}>
-                  {i > 0 && <Separator className="mb-5" />}
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900">
-                        {item.label}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {item.description}
-                      </p>
+              {isLoading ? (
+                <div className="space-y-4">
+                  {[...Array(2)].map((_, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
+                      <div className="h-10 bg-gray-100 rounded-xl animate-pulse" />
                     </div>
-                    <Toggle
-                      checked={
-                        notifPrefs[item.key as keyof typeof notifPrefs] ?? false
-                      }
-                      onChange={(val) =>
-                        handleNotificationToggle(item.key, val)
-                      }
-                      disabled={updateNotifications.isPending}
+                  ))}
+                </div>
+              ) : (
+                <form
+                  onSubmit={handleSubmit(onSaveProfile)}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1.5">
+                    <Label htmlFor="full_name">Full Name</Label>
+                    <Input
+                      id="full_name"
+                      {...register("full_name")}
+                      className={errors.full_name ? "border-red-400" : ""}
+                    />
+                    {errors.full_name && (
+                      <p className="text-red-500 text-xs">
+                        {errors.full_name.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="phone">Phone Number</Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      {...register("phone")}
+                      className={errors.phone ? "border-red-400" : ""}
+                    />
+                    {errors.phone && (
+                      <p className="text-red-500 text-xs">
+                        {errors.phone.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={!isDirty || updateProfile.isPending}
+                    className="w-full"
+                  >
+                    {updateProfile.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save Personal Info"
+                    )}
+                  </Button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* ── Section 2: Business ── */}
+        <motion.div
+          custom={1}
+          variants={sectionVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <Card className="border-gray-100">
+            <CardContent className="p-6">
+              <SectionHeading
+                icon={<Briefcase className="w-4 h-4" />}
+                title="Business Information"
+                description="Your business name, type, and timezone"
+              />
+
+              {isLoading ? (
+                <div className="space-y-4">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
+                      <div className="h-10 bg-gray-100 rounded-xl animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <form
+                  onSubmit={handleSubmit(onSaveProfile)}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1.5">
+                    <Label htmlFor="business_name">Business Name</Label>
+                    <Input
+                      id="business_name"
+                      {...register("business_name")}
+                      className={errors.business_name ? "border-red-400" : ""}
+                    />
+                    {errors.business_name && (
+                      <p className="text-red-500 text-xs">
+                        {errors.business_name.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="business_type">Business Type</Label>
+                    <Controller
+                      name="business_type"
+                      control={control}
+                      render={({ field }) => (
+                        <Select
+                          value={field.value}
+                          onValueChange={field.onChange}
+                        >
+                          <SelectTrigger id="business_type" className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(BUSINESS_TYPE_LABELS).map(
+                              ([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ),
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
                     />
                   </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
 
-      {/* ── Section 4: Account ── */}
-      <motion.div
-        custom={3}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-        className="space-y-4"
-      >
-        {/* Sign out */}
-        <Card className="border-gray-100">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-gray-900">Sign Out</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Sign out of your account on this device
-                </p>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="timezone">Timezone</Label>
+                    <Controller
+                      name="timezone"
+                      control={control}
+                      render={({ field }) => (
+                        <Select
+                          value={field.value}
+                          onValueChange={field.onChange}
+                        >
+                          <SelectTrigger id="timezone" className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-64">
+                            {getTimezoneList(profile?.timezone ?? "UTC").map(
+                              (tz) => (
+                                <SelectItem key={tz} value={tz}>
+                                  {tz}
+                                </SelectItem>
+                              ),
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={!isDirty || updateProfile.isPending}
+                    className="w-full"
+                  >
+                    {updateProfile.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save Business Info"
+                    )}
+                  </Button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* ── Section 3: Notifications ── */}
+        <motion.div
+          custom={2}
+          variants={sectionVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <Card className="border-gray-100">
+            <CardContent className="p-6">
+              <SectionHeading
+                icon={<Bell className="w-4 h-4" />}
+                title="Notification Preferences"
+                description="Choose what you want to be notified about"
+              />
+
+              <div className="space-y-5">
+                {[
+                  {
+                    key: "job_reminders",
+                    label: "Job Reminders",
+                    description:
+                      "Get reminded about upcoming jobs scheduled for today",
+                  },
+                  {
+                    key: "email_summary",
+                    label: "Daily Email Summary",
+                    description:
+                      "Receive a summary of the day's completed jobs by email",
+                  },
+                  {
+                    key: "sms_alerts",
+                    label: "SMS Alerts",
+                    description:
+                      "Receive SMS notifications about job cancellations or changes",
+                  },
+                ].map((item, i) => (
+                  <div key={item.key}>
+                    {i > 0 && <Separator className="mb-5" />}
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900">
+                          {item.label}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.description}
+                        </p>
+                      </div>
+                      <Toggle
+                        checked={
+                          notifPrefs[item.key as keyof typeof notifPrefs] ??
+                          false
+                        }
+                        onChange={(val) =>
+                          handleNotificationToggle(item.key, val)
+                        }
+                        disabled={updateNotifications.isPending}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
-              <Button variant="outline" onClick={handleLogout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign Out
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        {/* Subscription */}
-        {/* Subscription */}
-        <Card className="border-gray-100">
-          <CardContent className="p-6">
-            <SectionHeading
-              icon={<ShieldAlert className="w-4 h-4" />}
-              title="Subscription"
-              description="Manage your billing and plan"
-            />
-
-            {profile?.subscription_status === "active" ? (
-              <div className="space-y-4">
-                <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-                  <p className="text-sm font-semibold text-green-800">
-                    Active Subscription
+        {/* ── Section 4: Account ── */}
+        <motion.div
+          custom={3}
+          variants={sectionVariants}
+          initial="hidden"
+          animate="visible"
+          className="space-y-4"
+        >
+          {/* Sign out */}
+          <Card className="border-gray-100">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Sign Out</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Sign out of your account on this device
                   </p>
-                  <p className="text-xs text-green-600 mt-0.5">
-                    Your plan renews automatically
+                </div>
+                <Button variant="outline" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign Out
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Subscription */}
+          {/* Subscription */}
+          <Card className="border-gray-100">
+            <CardContent className="p-6">
+              <SectionHeading
+                icon={<ShieldAlert className="w-4 h-4" />}
+                title="Subscription"
+                description="Manage your billing and plan"
+              />
+
+              {profile?.subscription_status === "active" ? (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+                    <p className="text-sm font-semibold text-green-800">
+                      Active Subscription
+                    </p>
+                    <p className="text-xs text-green-600 mt-0.5">
+                      Your plan renews automatically
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={async () => {
+                      const res = await fetch("/api/stripe/portal", {
+                        method: "POST",
+                      });
+                      const data = await res.json();
+                      if (data.url) window.location.href = data.url;
+                      else toast.error("Could not open billing portal");
+                    }}
+                  >
+                    Manage Subscription
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                    <p className="text-sm font-semibold text-amber-800">
+                      {profile?.subscription_status === "cancelled"
+                        ? "Subscription Cancelled"
+                        : "Free Trial"}
+                    </p>
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      Upgrade to keep access to all features
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="border border-gray-200 rounded-xl p-4 text-center">
+                      <p className="text-xs text-gray-500 mb-1">Monthly</p>
+                      <p className="text-2xl font-bold text-gray-900">$19</p>
+                      <p className="text-xs text-gray-400 mb-3">per month</p>
+                      <Button
+                        className="w-full"
+                        size="sm"
+                        onClick={async () => {
+                          const res = await fetch(
+                            "/api/stripe/create-checkout",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                priceId:
+                                  process.env
+                                    .NEXT_PUBLIC_STRIPE_MONTHLY_PRICE_ID,
+                                billingCycle: "monthly",
+                              }),
+                            },
+                          );
+                          const data = await res.json();
+                          if (data.url) window.location.href = data.url;
+                          else toast.error("Could not start checkout");
+                        }}
+                      >
+                        Upgrade
+                      </Button>
+                    </div>
+
+                    <div className="border-2 border-blue-600 rounded-xl p-4 text-center relative">
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
+                        <span className="bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                          SAVE 17%
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-1">Yearly</p>
+                      <p className="text-2xl font-bold text-gray-900">$190</p>
+                      <p className="text-xs text-gray-400 mb-3">per year</p>
+                      <Button
+                        className="w-full"
+                        size="sm"
+                        onClick={async () => {
+                          const res = await fetch(
+                            "/api/stripe/create-checkout",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                priceId:
+                                  process.env
+                                    .NEXT_PUBLIC_STRIPE_YEARLY_PRICE_ID,
+                                billingCycle: "yearly",
+                              }),
+                            },
+                          );
+                          const data = await res.json();
+                          if (data.url) window.location.href = data.url;
+                          else toast.error("Could not start checkout");
+                        }}
+                      >
+                        Upgrade
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Danger zone */}
+          <Card className="border-red-100 bg-red-50/30">
+            <CardContent className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <ShieldAlert className="w-4 h-4 text-red-600" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-gray-900">Danger Zone</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Irreversible actions for your account
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Delete Account
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Permanently delete all your data. Cannot be undone.
                   </p>
                 </div>
                 <Button
                   variant="outline"
-                  className="w-full"
-                  onClick={async () => {
-                    const res = await fetch("/api/stripe/portal", {
-                      method: "POST",
-                    });
-                    const data = await res.json();
-                    if (data.url) window.location.href = data.url;
-                    else toast.error("Could not open billing portal");
-                  }}
+                  onClick={() => setDeleteDialogOpen(true)}
+                  className="border-red-200 text-red-600 hover:bg-red-50 flex-shrink-0"
                 >
-                  Manage Subscription
+                  Delete Account
                 </Button>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-                  <p className="text-sm font-semibold text-amber-800">
-                    {profile?.subscription_status === "cancelled"
-                      ? "Subscription Cancelled"
-                      : "Free Trial"}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Delete confirmation */}
+        <AlertDialog
+          open={deleteDialogOpen}
+          onOpenChange={(o) => {
+            if (!o) setDeleteConfirmText("");
+            setDeleteDialogOpen(o);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-gray-600">
+                  <p>
+                    This will permanently delete your account, all clients,
+                    jobs, routes, and supply data. This cannot be undone.
                   </p>
-                  <p className="text-xs text-amber-600 mt-0.5">
-                    Upgrade to keep access to all features
+                  <p>
+                    Type your business name{" "}
+                    <span className="font-semibold text-gray-900">
+                      {profile?.business_name}
+                    </span>{" "}
+                    to confirm:
                   </p>
+                  <Input
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder={profile?.business_name ?? ""}
+                  />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="border border-gray-200 rounded-xl p-4 text-center">
-                    <p className="text-xs text-gray-500 mb-1">Monthly</p>
-                    <p className="text-2xl font-bold text-gray-900">$19</p>
-                    <p className="text-xs text-gray-400 mb-3">per month</p>
-                    <Button
-                      className="w-full"
-                      size="sm"
-                      onClick={async () => {
-                        const res = await fetch("/api/stripe/create-checkout", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            priceId:
-                              process.env.NEXT_PUBLIC_STRIPE_MONTHLY_PRICE_ID,
-                            billingCycle: "monthly",
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.url) window.location.href = data.url;
-                        else toast.error("Could not start checkout");
-                      }}
-                    >
-                      Upgrade
-                    </Button>
-                  </div>
-
-                  <div className="border-2 border-blue-600 rounded-xl p-4 text-center relative">
-                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
-                      <span className="bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                        SAVE 17%
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 mb-1">Yearly</p>
-                    <p className="text-2xl font-bold text-gray-900">$190</p>
-                    <p className="text-xs text-gray-400 mb-3">per year</p>
-                    <Button
-                      className="w-full"
-                      size="sm"
-                      onClick={async () => {
-                        const res = await fetch("/api/stripe/create-checkout", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            priceId:
-                              process.env.NEXT_PUBLIC_STRIPE_YEARLY_PRICE_ID,
-                            billingCycle: "yearly",
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.url) window.location.href = data.url;
-                        else toast.error("Could not start checkout");
-                      }}
-                    >
-                      Upgrade
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Danger zone */}
-        <Card className="border-red-100 bg-red-50/30">
-          <CardContent className="p-6">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <ShieldAlert className="w-4 h-4 text-red-600" />
-              </div>
-              <div>
-                <h2 className="font-semibold text-gray-900">Danger Zone</h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Irreversible actions for your account
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-gray-900">
-                  Delete Account
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Permanently delete all your data. Cannot be undone.
-                </p>
-              </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>
+                Cancel
+              </AlertDialogCancel>
               <Button
-                variant="outline"
-                onClick={() => setDeleteDialogOpen(true)}
-                className="border-red-200 text-red-600 hover:bg-red-50 flex-shrink-0"
+                onClick={handleDeleteAccount}
+                disabled={
+                  deleteConfirmText !== profile?.business_name || isDeleting
+                }
+                className="bg-red-600 hover:bg-red-700 text-white"
               >
-                Delete Account
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete Account"
+                )}
               </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </PageTransition>
+  );
+}
 
-      {/* Delete confirmation */}
-      <AlertDialog
-        open={deleteDialogOpen}
-        onOpenChange={(o) => {
-          if (!o) setDeleteConfirmText("");
-          setDeleteDialogOpen(o);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-sm text-gray-600">
-                <p>
-                  This will permanently delete your account, all clients, jobs,
-                  routes, and supply data. This cannot be undone.
-                </p>
-                <p>
-                  Type your business name{" "}
-                  <span className="font-semibold text-gray-900">
-                    {profile?.business_name}
-                  </span>{" "}
-                  to confirm:
-                </p>
-                <Input
-                  value={deleteConfirmText}
-                  onChange={(e) => setDeleteConfirmText(e.target.value)}
-                  placeholder={profile?.business_name ?? ""}
-                />
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <Button
-              onClick={handleDeleteAccount}
-              disabled={
-                deleteConfirmText !== profile?.business_name || isDeleting
-              }
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete Account"
-              )}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+function SettingsPageFallback() {
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-4">
+      <Skeleton className="h-8 w-32" />
+      <Skeleton className="h-64 w-full rounded-2xl" />
+      <Skeleton className="h-48 w-full rounded-2xl" />
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<SettingsPageFallback />}>
+      <SettingsPageContent />
+    </Suspense>
   );
 }
