@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { Suspense } from "react";
 import { format, addDays, subDays, parseISO } from "date-fns";
-import { useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -64,7 +63,7 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-function JobsPageContent() {
+export default function JobsPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading } = useJobsByDate(selectedDate);
   const { data: clients } = useClients();
@@ -85,14 +84,14 @@ function JobsPageContent() {
     return null;
   }
 
-  const searchParams = useSearchParams();
-
   useEffect(() => {
-    if (searchParams.get("new") === "true") {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") === "true") {
       setFormOpen(true);
+      window.history.replaceState({}, "", "/dashboard/jobs");
     }
-  }, [searchParams]);
-
+  }, []);
   const dateObj = parseISO(selectedDate);
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const isToday = selectedDate === todayStr;
@@ -357,24 +356,5 @@ function JobsPageContent() {
         </AlertDialog>
       </div>
     </PageTransition>
-  );
-}
-
-function JobsPageFallback() {
-  return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-4">
-      <Skeleton className="h-8 w-32" />
-      <Skeleton className="h-12 w-full" />
-      <Skeleton className="h-24 w-full" />
-      <Skeleton className="h-24 w-full" />
-    </div>
-  );
-}
-
-export default function JobsPage() {
-  return (
-    <Suspense fallback={<JobsPageFallback />}>
-      <JobsPageContent />
-    </Suspense>
   );
 }

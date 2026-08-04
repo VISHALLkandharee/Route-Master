@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
 import { motion } from "framer-motion";
 import {
   Loader2,
@@ -177,9 +177,6 @@ function SettingsPageContent() {
   const updateProfile = useUpdateProfile();
   const updateNotifications = useUpdateNotificationPreferences();
 
-  const searchParams = useSearchParams();
-  const showUpgradePrompt = searchParams.get("upgrade") === "true";
-
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -257,6 +254,12 @@ function SettingsPageContent() {
     sms_alerts: false,
     job_reminders: true,
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setShowUpgradePrompt(params.get("upgrade") === "true");
+  }, []);
 
   return (
     <PageTransition>
