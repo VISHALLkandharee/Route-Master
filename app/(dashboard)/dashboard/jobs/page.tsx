@@ -80,10 +80,6 @@ export default function JobsPage() {
     }
   }, [selectedDate, setSelectedDate]);
 
-  if (!selectedDate) {
-    return null;
-  }
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -92,6 +88,10 @@ export default function JobsPage() {
       window.history.replaceState({}, "", "/dashboard/jobs");
     }
   }, []);
+
+  if (!selectedDate) {
+    return null;
+  }
   const dateObj = parseISO(selectedDate);
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const isToday = selectedDate === todayStr;
