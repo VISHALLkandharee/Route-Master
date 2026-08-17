@@ -95,7 +95,7 @@ export async function middleware(request: NextRequest) {
       .select('subscription_status, trial_ends_at')
       .single()
 
-    if (profile) {
+     if (profile) {
       const blocked = isBlocked(profile.subscription_status, profile.trial_ends_at)
 
       if (blocked) {
@@ -118,6 +118,11 @@ export async function middleware(request: NextRequest) {
         maxAge: COOKIE_MAX_AGE,
         path: '/',
       })
+    } else {
+      // A logged-in user with no profile row on a protected route
+      // should never happen post-onboarding. Fail closed instead
+      // of silently letting them through.
+      return NextResponse.redirect(new URL('/login', request.url))
     }
   }
 
