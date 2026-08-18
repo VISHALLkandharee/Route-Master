@@ -11,7 +11,7 @@ const AUTH_ROUTES = ['/login', '/signup']
 // in a short-lived cookie. This eliminates the per-request DB query
 // while still enforcing trial/billing status quickly.
 const SUBSCRIPTION_COOKIE = 'rm_sub_status'
-const COOKIE_MAX_AGE = 5 * 60 // 5 minutes (seconds)
+const COOKIE_MAX_AGE = 60 // 1 minute (seconds)
 
 type CachedStatus = {
   status: string

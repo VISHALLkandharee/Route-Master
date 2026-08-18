@@ -49,6 +49,8 @@ export function DashboardShell({
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    document.cookie =
+      "rm_sub_status=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     toast.success("Signed out");
     router.push("/login");
   };
