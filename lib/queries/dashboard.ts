@@ -25,10 +25,17 @@ export interface DashboardStats {
   activeClients: number
   lowStockCount: number
   revenueToday: number
+  supplyCostToday: number
+  profitToday: number
   upcomingJobs: UpcomingJob[]
 }
 
-interface RawUpcomingJob {
+interface SupplyLogRow {
+  quantity: number
+  supply: { cost_per_unit: number | null } | null
+}
+
+interface UpcomingJobRow {
   id: string
   title: string
   scheduled_time: string
@@ -43,7 +50,6 @@ export function useDashboardStats() {
 
   return useQuery({
     queryKey: [...dashboardQueryKey, today],
-    staleTime: 60 * 1000,
     queryFn: async (): Promise<DashboardStats> => {
       const [
         profileResult,
@@ -52,6 +58,7 @@ export function useDashboardStats() {
         clientsResult,
         lowStockResult,
         revenueResult,
+        supplyCostResult,
         upcomingResult,
       ] = await Promise.all([
         supabase
@@ -90,6 +97,13 @@ export function useDashboardStats() {
           .eq('status', 'completed')
           .is('deleted_at', null),
 
+        // Supply cost for jobs completed today
+        supabase
+          .from('supply_logs')
+          .select('quantity, supply:supplies(cost_per_unit), job:jobs!inner(scheduled_date, status)')
+          .eq('job.scheduled_date', today)
+          .eq('job.status', 'completed'),
+
         supabase
           .from('jobs')
           .select('id, title, scheduled_time, status, address, client:clients(full_name)')
@@ -101,18 +115,23 @@ export function useDashboardStats() {
           .limit(3),
       ])
 
-      if (profileResult.error) {
-        console.error('Error fetching dashboard profile:', profileResult.error)
-      }
-
       const revenueToday = (revenueResult.data ?? []).reduce(
         (sum: number, job: { price: number | null }) => sum + (job.price ?? 0),
         0
       )
 
-      const upcomingRaw = (upcomingResult.data ?? []) as unknown as RawUpcomingJob[]
+      const supplyCostToday = (
+        (supplyCostResult.data ?? []) as unknown as SupplyLogRow[]
+      ).reduce((sum, log) => {
+        const cost = log.supply?.cost_per_unit ?? 0
+        return sum + cost * log.quantity
+      }, 0)
 
-      const upcomingJobs: UpcomingJob[] = upcomingRaw.map((job) => ({
+      const profitToday = revenueToday - supplyCostToday
+
+      const upcomingJobs: UpcomingJob[] = (
+        (upcomingResult.data ?? []) as unknown as UpcomingJobRow[]
+      ).map((job) => ({
         id: job.id,
         title: job.title,
         scheduled_time: job.scheduled_time,
@@ -121,21 +140,23 @@ export function useDashboardStats() {
         address: job.address,
       }))
 
+      if (!profileResult.data) {
+        throw new Error('Failed to load profile')
+      }
+
       return {
-        profile: profileResult.data ?? {
-          full_name: 'User',
-          business_name: null,
-          subscription_status: 'trial',
-          trial_ends_at: new Date().toISOString(),
-        },
+        profile: profileResult.data,
         jobsToday: jobsTodayResult.count ?? 0,
         completedToday: completedTodayResult.count ?? 0,
         activeClients: clientsResult.count ?? 0,
         lowStockCount: lowStockResult.count ?? 0,
         revenueToday,
+        supplyCostToday,
+        profitToday,
         upcomingJobs,
       }
     },
+    staleTime: 5 * 60 * 1000,
     refetchInterval: 60 * 1000,
   })
 }
