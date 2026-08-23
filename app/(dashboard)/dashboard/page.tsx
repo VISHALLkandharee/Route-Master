@@ -15,8 +15,9 @@ import {
   ChevronRight,
   CheckCircle2,
   Clock,
+  Play,
   AlertTriangle,
-} from 'lucide-react'
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -326,24 +327,30 @@ export default function DashboardPage() {
               highlight={!!data?.lowStockCount}
               sublabel="items need restocking"
             />
-<StatCard
-  label="Revenue Today"
-  value={data?.revenueToday ?? 0}
-  icon={<DollarSign className="w-5 h-5" />}
-  iconBg="bg-purple-50"
-  iconColor="text-purple-600"
-  prefix="$"
-  sublabel="from completed jobs"
-/>
-<StatCard
-  label="Profit Today"
-  value={data?.profitToday ?? 0}
-  icon={<TrendingUp className="w-5 h-5" />}
-  iconBg={(data?.profitToday ?? 0) >= 0 ? 'bg-green-50' : 'bg-red-50'}
-  iconColor={(data?.profitToday ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}
-  prefix="$"
-  sublabel={`$${(data?.supplyCostToday ?? 0).toFixed(2)} in supplies used`}
-/>
+            <StatCard
+              label="Revenue Today"
+              value={data?.revenueToday ?? 0}
+              icon={<DollarSign className="w-5 h-5" />}
+              iconBg="bg-purple-50"
+              iconColor="text-purple-600"
+              prefix="$"
+              sublabel="from completed jobs"
+            />
+            <StatCard
+              label="Profit Today"
+              value={data?.profitToday ?? 0}
+              icon={<TrendingUp className="w-5 h-5" />}
+              iconBg={
+                (data?.profitToday ?? 0) >= 0 ? "bg-green-50" : "bg-red-50"
+              }
+              iconColor={
+                (data?.profitToday ?? 0) >= 0
+                  ? "text-green-600"
+                  : "text-red-600"
+              }
+              prefix="$"
+              sublabel={`$${(data?.supplyCostToday ?? 0).toFixed(2)} in supplies used`}
+            />
           </motion.div>
         )}
 
