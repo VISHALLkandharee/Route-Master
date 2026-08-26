@@ -610,6 +610,23 @@ export default function LandingPage() {
                     Sign in
                   </Link>
                 </div>
+                <div>
+                  <p className="font-semibold text-white mb-3">Legal</p>
+                  <div className="space-y-2">
+                    <Link
+                      href="/terms"
+                      className="block hover:text-white transition-colors"
+                    >
+                      Terms of Service
+                    </Link>
+                    <Link
+                      href="/privacy"
+                      className="block hover:text-white transition-colors"
+                    >
+                      Privacy Policy
+                    </Link>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

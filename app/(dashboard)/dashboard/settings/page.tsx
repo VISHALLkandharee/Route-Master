@@ -502,7 +502,6 @@ function SettingsPageContent() {
                 title="Notification Preferences"
                 description="Choose what you want to be notified about"
               />
-
               <div className="space-y-5">
                 {[
                   {
@@ -510,45 +509,51 @@ function SettingsPageContent() {
                     label: "Job Reminders",
                     description:
                       "Get reminded about upcoming jobs scheduled for today",
+                    comingSoon: true,
                   },
                   {
                     key: "email_summary",
                     label: "Daily Email Summary",
                     description:
                       "Receive a summary of the day's completed jobs by email",
+                    comingSoon: true,
                   },
                   {
                     key: "sms_alerts",
                     label: "SMS Alerts",
                     description:
                       "Receive SMS notifications about job cancellations or changes",
+                    comingSoon: true,
                   },
                 ].map((item, i) => (
                   <div key={item.key}>
                     {i > 0 && <Separator className="mb-5" />}
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900">
-                          {item.label}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900">
+                            {item.label}
+                          </p>
+                          {item.comingSoon && (
+                            <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                              Coming soon
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-gray-500 mt-0.5">
                           {item.description}
                         </p>
                       </div>
                       <Toggle
-                        checked={
-                          notifPrefs[item.key as keyof typeof notifPrefs] ??
-                          false
-                        }
-                        onChange={(val) =>
-                          handleNotificationToggle(item.key, val)
-                        }
-                        disabled={updateNotifications.isPending}
+                        checked={false}
+                        onChange={() => {}}
+                        disabled={true}
                       />
                     </div>
                   </div>
                 ))}
               </div>
+              \\
             </CardContent>
           </Card>
         </motion.div>

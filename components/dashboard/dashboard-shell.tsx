@@ -77,6 +77,15 @@ export function DashboardShell({
           <SidebarNav collapsed={!isSidebarOpen} />
         </div>
 
+        <div className="px-3 pb-2">
+          <a
+            href="mailto:support@yourdomain.com"
+            className="flex items-center gap-2 px-3 py-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Need help? Contact support
+          </a>
+        </div>
+
         <div className="p-3 border-t border-gray-100">
           <Button
             variant="ghost"
