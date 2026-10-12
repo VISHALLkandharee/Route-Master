@@ -19,7 +19,7 @@ export default function TermsPage() {
             1. Overview
           </h2>
           <p>
-            Routemaster ("we," "our," "us") provides route optimization, client
+            Routemaster (&quot;we,&quot; &quot;our,&quot; &quot;us&quot;) provides route optimization, client
             notification, and supply tracking software for mobile service
             professionals. By creating an account, you agree to these Terms of
             Service.
@@ -90,7 +90,7 @@ export default function TermsPage() {
             7. Limitation of Liability
           </h2>
           <p>
-            Routemaster is provided "as is." To the maximum extent permitted by
+            Routemaster is provided &quot;as is.&quot; To the maximum extent permitted by
             law, we are not liable for indirect, incidental, or consequential
             damages arising from use of the service.
           </p>

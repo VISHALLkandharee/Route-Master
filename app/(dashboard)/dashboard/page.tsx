@@ -27,16 +27,13 @@ import { PageTransition } from "@/components/dashboard/page-transition";
 
 // ─── Count-up hook ─────────────────────────────────────────────
 
-function useCountUp(target: number, duration = 1000, enabled = true) {
+function useCountUp(target: number, duration = 1000) {
   const [count, setCount] = useState(0);
   const frameRef = useRef<number>(0);
   const startTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!enabled || target === 0) {
-      setCount(target);
-      return;
-    }
+    if (target === 0) return;
 
     startTimeRef.current = null;
 
@@ -53,8 +50,9 @@ function useCountUp(target: number, duration = 1000, enabled = true) {
 
     frameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameRef.current);
-  }, [target, duration, enabled]);
+  }, [target, duration]);
 
+  if (target === 0) return 0;
   return count;
 }
 
@@ -113,9 +111,7 @@ function StatCard({
   sublabel,
   highlight,
 }: StatCardProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const displayValue = useCountUp(value, 900, mounted);
+  const displayValue = useCountUp(value, 900);
 
   return (
     <motion.div variants={cardVariants} className="h-full">
@@ -178,11 +174,7 @@ function formatTime(time: string) {
 
 export default function DashboardPage() {
   const { data, isLoading } = useDashboardStats();
-  const [greeting, setGreeting] = useState("");
-
-  useEffect(() => {
-    setGreeting(getGreeting());
-  }, []);
+  const [greeting] = useState(getGreeting);
 
   const firstName = data?.profile.full_name.split(" ")[0] ?? "";
   const daysLeft = data?.profile.trial_ends_at

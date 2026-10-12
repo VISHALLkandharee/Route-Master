@@ -217,7 +217,7 @@ export function SupplyFormSheet({
           </div>
 
           <p className="text-xs text-gray-500 -mt-2">
-            You'll be alerted when stock drops to or below the threshold.
+            You&apos;ll be alerted when stock drops to or below the threshold.
           </p>
 
           <div className="space-y-1.5">

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Suspense } from "react";
 import { format, addDays, subDays, parseISO } from "date-fns";
 import {
   ChevronLeft,
@@ -70,7 +69,10 @@ export default function JobsPage() {
   const deleteJob = useDeleteJob();
   const updateStatus = useUpdateJobStatus();
 
-  const [formOpen, setFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("new") === "true";
+  });
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [deletingJob, setDeletingJob] = useState<Job | null>(null);
 
@@ -84,7 +86,6 @@ export default function JobsPage() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("new") === "true") {
-      setFormOpen(true);
       window.history.replaceState({}, "", "/dashboard/jobs");
     }
   }, []);

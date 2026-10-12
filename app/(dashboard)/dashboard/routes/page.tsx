@@ -24,23 +24,11 @@ import {
   useLastStartLocation,
   useSendSMS,
   useStartDay,
-  routesQueryKey,
 } from "@/lib/queries/routes";
 import { MessageSquare } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { StartLocationInput } from "@/components/dashboard/routes/start-location-input";
-import { useQueryClient } from "@tanstack/react-query";
 import { PageTransition } from "@/components/dashboard/page-transition";
-
-const STEP_ICONS: Record<string, string> = {
-  geocoding: "📍",
-  loading_jobs: "📋",
-  backfill: "🗺️",
-  optimizing: "⚡",
-  directions: "🛣️",
-  saving: "💾",
-  complete: "✅",
-};
 
 const STEP_ORDER = [
   "geocoding",
@@ -135,29 +123,28 @@ function openNavigation(address: string) {
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
-  const { data: route, isLoading: routeLoading } = useRouteByDate(selectedDate);
+  const { data: route } = useRouteByDate(selectedDate);
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
   const sendSMS = useSendSMS();
   const startDay = useStartDay();
   const updateStatus = useUpdateJobStatus();
-  const queryClient = useQueryClient();
 
-  const [startLocation, setStartLocation] = useState("");
+  const [editedLocations, setEditedLocations] = useState<Record<string, string>>({});
+  const startLocation =
+    (selectedDate ? editedLocations[selectedDate] : undefined) ??
+    (route?.start_location || lastStartLocation || "");
+
+  const handleStartLocationChange = (val: string) => {
+    if (!selectedDate) return;
+    setEditedLocations((prev) => ({ ...prev, [selectedDate]: val }));
+  };
 
   useEffect(() => {
     if (!selectedDate) {
       setSelectedDate(format(new Date(), "yyyy-MM-dd"));
     }
   }, [selectedDate, setSelectedDate]);
-
-  useEffect(() => {
-    if (route?.start_location) {
-      setStartLocation(route.start_location);
-    } else if (lastStartLocation) {
-      setStartLocation((prev) => prev || lastStartLocation);
-    }
-  }, [route, lastStartLocation]);
 
   if (!selectedDate) return null;
 
@@ -273,7 +260,7 @@ export default function RoutesPage() {
                   <div className="flex-1">
                     <StartLocationInput
                       value={startLocation}
-                      onChange={setStartLocation}
+                      onChange={handleStartLocationChange}
                       disabled={optimizeRoute.isPending || sendSMS.isPending}
                     />
                   </div>

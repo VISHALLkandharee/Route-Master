@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
+import Script from "next/script";
 import QueryProvider from "@/lib/providers/query-provider";
 import "./globals.css";
 
@@ -19,8 +20,8 @@ const inter = Inter({
 // ─── Metadata ─────────────────────────────────────────────────
 
 export const metadata: Metadata = {
-    metadataBase: new URL(
-    process.env.NEXT_PUBLIC_APP_URL || 'https://routemaster.vercel.app'
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || "https://routemaster.vercel.app",
   ),
   title: {
     default: "Routemaster — Route Optimization for Mobile Service Pros",
@@ -85,6 +86,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
+      <head>
+        <Script
+          defer
+          data-website-id="dfid_gbh4MDhaT6Q49gmoVP1kA"
+          data-domain="route-master-sooty.vercel.app"
+          src="https://datafa.st/js/script.js"
+        />
+      </head>
+
       <body className={`antialiased ${inter.className}`}>
         <QueryProvider>
           {children}

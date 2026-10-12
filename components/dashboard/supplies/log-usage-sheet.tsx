@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { format } from "date-fns";
 import { Loader2 } from "lucide-react";
 import {
@@ -38,13 +38,14 @@ export function LogUsageSheet({ open, onOpenChange }: LogUsageSheetProps) {
   const { data: jobs } = useJobsByDate(selectedDate);
   const logUsage = useLogSupplyUsage();
 
-  useEffect(() => {
-    if (!open) {
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen) {
       setSelectedDate(todayStr);
       setSelectedJobId("");
       setQuantities({});
     }
-  }, [open, todayStr]);
+    onOpenChange(newOpen);
+  };
 
   const handleSubmit = () => {
     if (!selectedJobId) return;
@@ -60,14 +61,14 @@ export function LogUsageSheet({ open, onOpenChange }: LogUsageSheetProps) {
 
     logUsage.mutate(
       { jobId: selectedJobId, entries },
-      { onSuccess: () => onOpenChange(false) },
+      { onSuccess: () => handleOpenChange(false) },
     );
   };
 
   const hasEntries = Object.values(quantities).some((q) => Number(q) > 0);
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent className="w-full sm:max-w-md overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Log Supply Usage</SheetTitle>
