@@ -305,10 +305,15 @@ export default function RoutesPage() {
                     ) : (
                       <>
                         <MessageSquare className="w-4 h-4 mr-1.5" />
-                        Send SMS to All Clients
+                        Send Arrival Texts
                       </>
                     )}
                   </Button>
+                )}
+                {route && !optimizeRoute.isPending && (
+                  <p className="text-xs text-gray-500">
+                    Only clients who prefer SMS receive a message. Call and no-contact preferences are respected.
+                  </p>
                 )}
               </div>
             </CardContent>

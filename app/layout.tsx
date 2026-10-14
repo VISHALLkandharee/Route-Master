@@ -1,18 +1,21 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { Toaster } from "sonner";
 import Script from "next/script";
 import QueryProvider from "@/lib/providers/query-provider";
+import { getAppUrl } from "@/lib/app-url";
 import "./globals.css";
 
 // ─── Font ─────────────────────────────────────────────────────
-// next/font automatically subsets, self-hosts, and inlines the
-// critical @font-face declaration — no external network request
-// and no layout shift. Only the 4 weights we actually use are loaded
-// (was: all 9 weights via @fontsource, ~400 KB of unnecessary fonts).
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+// Self-host the four weights used by the UI. Builds no longer depend on
+// Google Fonts being reachable, and the font is served from this app.
+const inter = localFont({
+  src: [
+    { path: "../node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2", weight: "400" },
+    { path: "../node_modules/@fontsource/inter/files/inter-latin-500-normal.woff2", weight: "500" },
+    { path: "../node_modules/@fontsource/inter/files/inter-latin-600-normal.woff2", weight: "600" },
+    { path: "../node_modules/@fontsource/inter/files/inter-latin-700-normal.woff2", weight: "700" },
+  ],
   variable: "--font-sans",
   display: "swap",
 });
@@ -20,15 +23,13 @@ const inter = Inter({
 // ─── Metadata ─────────────────────────────────────────────────
 
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_APP_URL || "https://routemaster.vercel.app",
-  ),
+  metadataBase: new URL(getAppUrl()),
   title: {
     default: "Routemaster — Route Optimization for Mobile Service Pros",
     template: "%s | Routemaster",
   },
   description:
-    "Route optimization, automated client SMS notifications, and supply tracking for mobile service professionals. Save 45 minutes every day.",
+    "Plan efficient daily routes, send client arrival updates when you’re ready, and track supplies for your mobile service business.",
   keywords: [
     "route optimization",
     "mobile grooming route planner",
@@ -44,8 +45,8 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     description:
-      "Route optimization, automated SMS, and supply tracking for mobile service professionals.",
-    url: process.env.NEXT_PUBLIC_APP_URL || "https://routemaster.vercel.app",
+      "Route optimization, one-tap client arrival updates, and supply tracking for mobile service professionals.",
+    url: getAppUrl(),
     siteName: "Routemaster",
     title: "Routemaster — Route Optimization for Mobile Service Pros",
     images: [
@@ -61,7 +62,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Routemaster — Route Optimization for Mobile Service Pros",
     description:
-      "Route optimization, automated SMS, and supply tracking for mobile service professionals.",
+      "Route optimization, client arrival updates, and supply tracking for mobile service professionals.",
     images: ["/og-image.png"],
   },
   robots: {
@@ -88,10 +89,10 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <head>
         <Script
-          defer
           data-website-id="dfid_gbh4MDhaT6Q49gmoVP1kA"
-          data-domain="route-master-sooty.vercel.app"
+          data-domain="routemaster.vishallkumar.com"
           src="https://datafa.st/js/script.js"
+          strategy="afterInteractive"
         />
       </head>
 

@@ -179,6 +179,7 @@ function SettingsPageContent() {
 
   const searchParams = useSearchParams();
   const showUpgradePrompt = searchParams.get("upgrade") === "true";
+  const showAccessUnavailable = searchParams.get("billing") === "unavailable";
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -261,6 +262,21 @@ function SettingsPageContent() {
   return (
     <PageTransition>
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+        {showAccessUnavailable && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4"
+            role="status"
+          >
+            <p className="text-sm font-semibold text-amber-900">
+              We couldn’t verify your plan right now
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              Your data is safe. Refresh this page in a moment or contact support if access does not return.
+            </p>
+          </motion.div>
+        )}
         {showUpgradePrompt && (
           <motion.div
             initial={{ opacity: 0, y: -12 }}

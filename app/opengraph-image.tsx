@@ -54,7 +54,7 @@ export default async function Image() {
           maxWidth: 700,
         }}
       >
-        Route optimization, automated SMS, and supply tracking for mobile
+        Route optimization, client arrival updates, and supply tracking for mobile
         service professionals
       </div>
     </div>,

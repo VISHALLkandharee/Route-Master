@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import stripe from '@/lib/stripe'
+import { getAppUrl } from '@/lib/app-url'
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const baseUrl = getAppUrl()
 
   const portalSession = await stripe.billingPortal.sessions.create({
     customer: profile.stripe_customer_id,

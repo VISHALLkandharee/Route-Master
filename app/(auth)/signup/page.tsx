@@ -69,6 +69,9 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [successMode, setSuccessMode] = useState<"confirmation" | "onboarding" | null>(null);
+  const [signupEmail, setSignupEmail] = useState("");
+  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
   const [shake, setShake] = useState(false);
 
   const {
@@ -95,13 +98,23 @@ export default function SignupPage() {
   // ─── Submit ─────────────────────────────────────────────────
 
   const onSubmit = async (data: SignupFormData) => {
-    const { data: authData, error } = await supabase.auth.signUp({
-      email: data.email,
-      password: data.password,
-      options: {
-        data: { full_name: data.fullName },
-      },
-    });
+    setSignupEmail(data.email.trim());
+    let signupResult: Awaited<ReturnType<typeof supabase.auth.signUp>>;
+    try {
+      signupResult = await supabase.auth.signUp({
+        email: data.email.trim(),
+        password: data.password,
+        options: {
+          data: { full_name: data.fullName.trim() },
+        },
+      });
+    } catch {
+      triggerShake();
+      toast.error("We couldn’t reach the sign-up service. Check your connection and try again.");
+      return;
+    }
+
+    const { data: authData, error } = signupResult;
 
     if (error) {
       triggerShake();
@@ -126,16 +139,43 @@ export default function SignupPage() {
     // If email confirmation is ON → no session → show email message
     if (!authData.session) {
       setIsSuccess(true);
+      setSuccessMode("confirmation");
       toast.success("Check your email to confirm your account!");
       return;
     }
 
     setIsSuccess(true);
+    setSuccessMode("onboarding");
     toast.success("Account created successfully!");
 
     setTimeout(() => {
       router.replace("/onboarding");
     }, 1000);
+  };
+
+  const resendConfirmation = async () => {
+    if (!signupEmail || isResendingConfirmation) return;
+
+    setIsResendingConfirmation(true);
+    let error;
+    try {
+      ({ error } = await supabase.auth.resend({
+        type: "signup",
+        email: signupEmail,
+      }));
+    } catch {
+      setIsResendingConfirmation(false);
+      toast.error("We couldn’t reach the email service. Please try again.");
+      return;
+    }
+    setIsResendingConfirmation(false);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    toast.success("A new confirmation link is on its way.");
   };
 
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
@@ -226,12 +266,41 @@ export default function SignupPage() {
                   >
                     <CheckCircle2 className="w-10 h-10 text-green-600" />
                   </motion.div>
-                  <p className="text-green-700 font-semibold text-lg">
-                    Account created!
-                  </p>
-                  <p className="text-gray-400 text-sm mt-1">
-                    Taking you to setup...
-                  </p>
+                  {successMode === "confirmation" ? (
+                    <>
+                      <p className="text-gray-900 font-semibold text-lg">
+                        Confirm your email to continue
+                      </p>
+                      <p className="text-gray-500 text-sm mt-2 text-center max-w-xs">
+                        We sent a confirmation link to <strong>{signupEmail}</strong>. Open that link to verify your account and start setup.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-5"
+                        onClick={resendConfirmation}
+                        disabled={isResendingConfirmation}
+                      >
+                        {isResendingConfirmation ? "Sending..." : "Resend confirmation email"}
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSuccess(false)}
+                        className="mt-3 text-sm text-blue-600 hover:underline"
+                      >
+                        Use a different email
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-green-700 font-semibold text-lg">
+                        Account ready!
+                      </p>
+                      <p className="text-gray-500 text-sm mt-1">
+                        Taking you to setup...
+                      </p>
+                    </>
+                  )}
                 </motion.div>
               ) : (
                 /* Form */

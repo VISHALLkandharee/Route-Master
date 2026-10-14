@@ -4,6 +4,8 @@ import { geocodeAddress } from '@/lib/ors/geocode'
 import { optimizeRoute } from '@/lib/ors/optimize'
 import { getDirections } from '@/lib/ors/directions'
 import { rateLimit } from '@/lib/rate-limit'
+import { getSubscriptionAccess } from '@/lib/subscription-access'
+import { isDateOnly } from '@/lib/validation'
 
 
 interface JobRow {
@@ -16,8 +18,6 @@ interface JobRow {
 
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder()
-  const body = await request.json()
-  const { date, start_location } = body
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -30,6 +30,13 @@ export async function POST(request: NextRequest) {
       try {
         const supabase = await createClient()
 
+        const contentLength = Number(request.headers.get('content-length') ?? 0)
+        if (contentLength > 8192) {
+          send({ step: 'error', message: 'Request is too large.' })
+          controller.close()
+          return
+        }
+
         // ── Auth ────────────────────────────────────────────────
         const { data: userData, error: userError } =
           await supabase.auth.getUser()
@@ -40,24 +47,62 @@ export async function POST(request: NextRequest) {
         }
         const userId = userData.user.id
 
-        const { success } = rateLimit(`optimize:${userId}`, {
+        const access = await getSubscriptionAccess(supabase, userId)
+        if (access.status !== 'allowed') {
+          send({
+            step: 'error',
+            message:
+              access.status === 'unavailable'
+                ? 'Account access could not be verified. Please try again.'
+                : 'An active trial or subscription is required to optimize routes.',
+          })
+          controller.close()
+          return
+        }
+
+        const limit = await rateLimit(`optimize:${userId}`, {
           windowMs: 60 * 1000,
           max: 10,
-        }) 
+        })
 
+        if (!limit.available) {
+          send({ step: 'error', message: 'Route service is temporarily unavailable. Please try again.' })
+          controller.close()
+          return
+        }
+        if (!limit.success) {
+          send({
+            step: 'error',
+            message: `Too many requests. Please wait ${limit.retryAfterSeconds} seconds before trying again.`,
+          })
+          controller.close()
+          return
+        }
 
-if (!success) {
-  send({
-    step: 'error',
-    message: 'Too many requests. Please wait a moment before optimizing again.',
-  })
-  controller.close()
-  return
-}
+        let body: unknown
+        try {
+          body = await request.json()
+        } catch {
+          send({ step: 'error', message: 'Request was invalid. Please refresh and try again.' })
+          controller.close()
+          return
+        }
+        const date =
+          typeof body === 'object' && body !== null && 'date' in body
+            ? (body as { date?: unknown }).date
+            : null
+        const start_location =
+          typeof body === 'object' && body !== null && 'start_location' in body
+            ? (body as { start_location?: unknown }).start_location
+            : null
 
-
-        if (!date) {
+        if (!isDateOnly(date)) {
           send({ step: 'error', message: 'A date is required.' })
+          controller.close()
+          return
+        }
+        if (start_location !== null && (typeof start_location !== 'string' || start_location.length > 300)) {
+          send({ step: 'error', message: 'Start location is invalid. Please check it and try again.' })
           controller.close()
           return
         }
@@ -69,7 +114,7 @@ if (!success) {
         let startLongitude: number | null = null
         let startLocationText: string | null = null
 
-        if (start_location?.trim()) {
+        if (typeof start_location === 'string' && start_location.trim()) {
           const geocoded = await geocodeAddress(start_location.trim())
           if (!geocoded) {
             send({

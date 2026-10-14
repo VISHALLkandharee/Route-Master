@@ -186,6 +186,22 @@ export default function DashboardPage() {
       ? Math.round((data.completedToday / data.jobsToday) * 100)
       : 0;
 
+  const firstRouteComplete = ["optimized", "in_progress", "completed"].includes(
+    data?.todayRouteStatus ?? "",
+  );
+  const firstRouteNextPath =
+    (data?.activeClients ?? 0) === 0
+      ? "/dashboard/clients"
+      : (data?.jobsToday ?? 0) === 0
+        ? "/dashboard/jobs?new=true"
+        : "/dashboard/routes";
+  const firstRouteAction =
+    (data?.activeClients ?? 0) === 0
+      ? "Add your first client"
+      : (data?.jobsToday ?? 0) === 0
+        ? "Schedule a job for today"
+        : "Optimize today’s route";
+
   return (
     <PageTransition>
       <div className="max-w-5xl mx-auto px-4 py-8">
@@ -244,6 +260,56 @@ export default function DashboardPage() {
               )}
           </div>
         </motion.div>
+
+        {!isLoading && data && !firstRouteComplete && (
+          <motion.div
+            variants={cardVariants}
+            initial="hidden"
+            animate="visible"
+            className="mb-6"
+          >
+            <Card className="overflow-hidden border-blue-100 bg-gradient-to-br from-blue-50 to-white">
+              <CardContent className="p-5 sm:p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                      Your first route
+                    </p>
+                    <h2 className="mt-1 text-lg font-semibold text-gray-900">
+                      Turn today’s schedule into a drive-ready plan
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Add a client, schedule a job for today, set your starting point, then optimize. Client messages are sent only when you choose to send them.
+                    </p>
+                  </div>
+                  <Link href={firstRouteNextPath} className="shrink-0">
+                    <Button>
+                      {firstRouteAction}
+                      <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
+
+                <div className="mt-5 grid gap-2 border-t border-blue-100 pt-4 sm:grid-cols-3">
+                  {[
+                    { label: "Add a client", complete: data.activeClients > 0 },
+                    { label: "Schedule today’s job", complete: data.jobsToday > 0 },
+                    { label: "Set start and optimize", complete: firstRouteComplete },
+                  ].map((step) => (
+                    <div key={step.label} className="flex items-center gap-2 text-sm">
+                      <CheckCircle2
+                        className={`h-4 w-4 ${step.complete ? "text-green-600" : "text-gray-300"}`}
+                      />
+                      <span className={step.complete ? "text-gray-500 line-through" : "text-gray-700"}>
+                        {step.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
         {/* Low stock alert */}
         {data && data.lowStockCount > 0 && (

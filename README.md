@@ -1,12 +1,12 @@
 # Routemaster
 
-Route optimization, automated client messaging, and supply tracking for mobile service professionals — pet groomers, pool cleaners, auto detailers, and anyone who drives to their clients.
+Route optimization, client arrival updates, and supply tracking for mobile service professionals — pet groomers, pool cleaners, auto detailers, and anyone who drives to their clients.
 
 ## What It Does
 
 **Route Optimization** — Add your jobs for the day, click Optimize, and get the most fuel-efficient driving order calculated automatically using OpenRouteService.
 
-**AI Client Messages** — Generates a personalized arrival message for every client using Claude AI. Open WhatsApp with one tap to send it pre-filled.
+**Client Arrival Updates** — Prepare personalized arrival messages, then explicitly send SMS to clients who chose SMS as their preferred contact method.
 
 **Supply Tracking** — Track what supplies you carry, log what you use per job, and get automatic low-stock alerts before you run out mid-day.
 
@@ -167,15 +167,13 @@ After deploying, update these three services with your production URL:
 - Copy the signing secret to `STRIPE_WEBHOOK_SECRET`
 
 **Environment Variable**:
-- Update `NEXT_PUBLIC_APP_URL` to your production domain
+- Set `NEXT_PUBLIC_APP_URL` to `https://routemaster.vishallkumar.com` for production integrations.
+- Apply pending Supabase migrations before deploying code that depends on them. In particular, `20261015000001_security_rate_limits.sql` creates the shared rate limiter. Production API actions fail closed until it is applied.
+- Add the Twilio production credentials listed in `.env.example` before enabling SMS sending.
 
 ## SMS Configuration
 
-By default, SMS runs in development mode — messages are logged to the console. To enable real delivery:
-
-1. Sign up for Twilio, Vonage, or AWS SNS
-2. Add credentials to `.env.local` and Vercel
-3. Update `lib/sms/sender.ts` — the file has clear `TODO: TWILIO SWAP` comments showing exactly what to uncomment
+Local development uses a mock and never sends messages. Production sends through Twilio and requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER`. If any credential is missing or Twilio rejects the message, the app reports a failure and does not mark the job as submitted. New clients default to no SMS; select SMS only after the client agrees to receive texts. Configure Twilio for the countries and sender types where customers operate.
 
 ## License
 

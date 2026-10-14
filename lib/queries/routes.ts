@@ -175,7 +175,7 @@ export function useOptimizeRoute() {
 
 
 interface SendSMSResult {
-  sent: number
+  submitted: number
   skipped: number
   failed: number
 }
@@ -198,7 +198,7 @@ export function useSendSMS() {
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(date) })
 
       const parts = []
-      if (data.sent > 0) parts.push(`${data.sent} sent`)
+      if (data.submitted > 0) parts.push(`${data.submitted} submitted to the SMS provider`)
       if (data.skipped > 0) parts.push(`${data.skipped} skipped`)
       if (data.failed > 0) parts.push(`${data.failed} failed`)
 

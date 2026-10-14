@@ -67,7 +67,7 @@ const EMPTY_DEFAULTS: ClientFormData = {
   email: "",
   address: "",
   service_type: "" as ClientFormData["service_type"],
-  preferred_contact: "sms",
+  preferred_contact: "none",
   notes: "",
 };
 
@@ -215,6 +215,9 @@ export function ClientFormSheet({
 
           <div className="space-y-1.5">
             <Label htmlFor="preferred_contact">Preferred Contact Method</Label>
+            <p className="text-xs text-gray-500">
+              SMS is sent only when selected here. Confirm the client has agreed to receive texts.
+            </p>
             <Controller
               name="preferred_contact"
               control={control}

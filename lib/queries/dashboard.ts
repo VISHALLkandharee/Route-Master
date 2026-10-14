@@ -21,6 +21,7 @@ export interface DashboardStats {
     trial_ends_at: string
   }
   jobsToday: number
+  todayRouteStatus: string | null
   completedToday: number
   activeClients: number
   lowStockCount: number
@@ -60,6 +61,7 @@ export function useDashboardStats() {
         revenueResult,
         supplyCostResult,
         upcomingResult,
+        routeResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -113,6 +115,12 @@ export function useDashboardStats() {
           .order('order_index', { ascending: true })
           .order('scheduled_time', { ascending: true })
           .limit(3),
+
+        supabase
+          .from('routes')
+          .select('status')
+          .eq('scheduled_date', today)
+          .maybeSingle(),
       ])
 
       const revenueToday = (revenueResult.data ?? []).reduce(
@@ -147,6 +155,7 @@ export function useDashboardStats() {
       return {
         profile: profileResult.data,
         jobsToday: jobsTodayResult.count ?? 0,
+        todayRouteStatus: routeResult.data?.status ?? null,
         completedToday: completedTodayResult.count ?? 0,
         activeClients: clientsResult.count ?? 0,
         lowStockCount: lowStockResult.count ?? 0,

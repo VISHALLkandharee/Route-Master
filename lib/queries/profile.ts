@@ -75,46 +75,19 @@ export function useCompleteOnboarding() {
           onboarding_completed: true,
         })
         .eq('id', userData.user.id)
+        .select('id')
+        .single()
 
       if (error) throw error
     },
 
-    // Fires INSTANTLY on submit — before the server responds
-    onMutate: async (data) => {
-      await queryClient.cancelQueries({ queryKey: profileQueryKey })
-
-      const previousProfile = queryClient.getQueryData<UserProfile>(profileQueryKey)
-
-      queryClient.setQueryData<UserProfile>(profileQueryKey, (old) => {
-        if (!old) return old
-        return {
-          ...old,
-          business_type: data.business_type,
-          business_name: data.business_name,
-          phone: data.phone,
-          timezone: data.timezone,
-          onboarding_completed: true,
-        }
-      })
-
-      // Navigate immediately — don't wait for the server
-      router.push('/dashboard')
-
-      return { previousProfile }
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: profileQueryKey })
+      router.replace('/dashboard')
     },
-
-    // Only runs if the server request actually fails
-    onError: (_err, _data, context) => {
-      if (context?.previousProfile) {
-        queryClient.setQueryData(profileQueryKey, context.previousProfile)
-      }
+    onError: (error) => {
+      console.error('Onboarding save failed:', error)
       toast.error('Something went wrong. Please try again.')
-      router.push('/onboarding')
-    },
-
-    // Always runs — re-syncs cache with real server data
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: profileQueryKey })
     },
   })
 }

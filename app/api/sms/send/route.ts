@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateSMSMessage } from '@/lib/sms/generate-message'
-import { sendSMS } from '@/lib/sms/sender'
+import { isSmsDeliveryConfigured, sendSMS } from '@/lib/sms/sender'
 import { rateLimit } from '@/lib/rate-limit'
+import { getSubscriptionAccess } from '@/lib/subscription-access'
+import { isDateOnly } from '@/lib/validation'
 
 interface ClientRecord {
   id: string
@@ -30,25 +32,68 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-
   const userId = userData.user.id;  
 
-  const { success } = rateLimit(`sms:${userId}`, {
+  const access = await getSubscriptionAccess(supabase, userId)
+  if (access.status === 'unauthenticated') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (access.status === 'blocked') {
+    return NextResponse.json({ error: 'An active trial or subscription is required.' }, { status: 402 })
+  }
+  if (access.status === 'unavailable') {
+    return NextResponse.json({ error: 'Account access could not be verified.' }, { status: 503 })
+  }
+
+  const limit = await rateLimit(`sms:${userId}`, {
     windowMs: 60 * 1000,  // 1 minute
     max: 5,               // 5 SMS sends per minute per user
   })
 
-  if (!success) {
-  return NextResponse.json(
-     { error: 'Too many requests. Please wait before sending SMS again.' },
-      { status: 429 }
+  if (!limit.available) {
+    return NextResponse.json({ error: 'Messaging service is temporarily unavailable.' }, { status: 503 })
+  }
+  if (!limit.success) {
+    return NextResponse.json(
+      { error: `Too many requests. Please wait ${limit.retryAfterSeconds} seconds before sending again.` },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfterSeconds) } },
     )
   }
 
+  if (!isSmsDeliveryConfigured()) {
+    return NextResponse.json(
+      { error: 'SMS delivery is not configured. Contact support before sending client messages.' },
+      { status: 503 },
+    )
+  }
 
-  const { date } = await request.json()
-  if (!date) {
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 })
+  }
+  const date =
+    typeof body === 'object' && body !== null && 'date' in body
+      ? (body as { date?: unknown }).date
+      : null
+  if (!isDateOnly(date)) {
     return NextResponse.json({ error: 'Date is required' }, { status: 400 })
+  }
+
+  const { data: route, error: routeError } = await supabase
+    .from('routes')
+    .select('status')
+    .eq('scheduled_date', date)
+    .maybeSingle()
+  if (routeError) {
+    return NextResponse.json({ error: 'Could not verify the route status.' }, { status: 500 })
+  }
+  if (!route || !['optimized', 'in_progress', 'completed'].includes(route.status)) {
+    return NextResponse.json(
+      { error: 'Optimize this day’s route before sending arrival updates.' },
+      { status: 409 },
+    )
   }
 
   // ── Business name ───────────────────────────────────────────
@@ -68,6 +113,7 @@ export async function POST(request: NextRequest) {
     .in('status', ['pending', 'in_progress'])
     .is('deleted_at', null)
     .order('order_index', { ascending: true })
+    .limit(51)
 
   if (jobsError) {
     return NextResponse.json({ error: 'Failed to load jobs' }, { status: 500 })
@@ -77,9 +123,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No jobs scheduled for this day' }, { status: 400 })
   }
 
+  if (jobs.length > 50) {
+    return NextResponse.json(
+      { error: 'This route has more than 50 jobs. Split it into smaller days before sending messages.' },
+      { status: 400 },
+    )
+  }
+
   const totalStops = jobs.length
   const results = {
-    sent: 0,
+    submitted: 0,
     skipped: 0,
     failed: 0,
     details: [] as { jobId: string; status: string; reason?: string }[],
@@ -101,12 +154,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Client opted out — skip
-    if (!client || client.preferred_contact === 'none') {
+    if (!client || client.preferred_contact !== 'sms') {
       results.skipped++
       results.details.push({
         jobId: job.id,
         status: 'skipped',
-        reason: 'Client opted out of notifications',
+        reason: client?.preferred_contact === 'call'
+          ? 'Client prefers phone calls, not SMS'
+          : 'Client opted out of SMS notifications',
       })
       continue
     }
@@ -123,7 +178,17 @@ export async function POST(request: NextRequest) {
       })
 
       // Send (mock in development, real Twilio in production)
-      await sendSMS(client.phone, message)
+      const smsResult = await sendSMS(client.phone, message)
+
+      if (!smsResult.acceptedByProvider) {
+        results.skipped++
+        results.details.push({
+          jobId: job.id,
+          status: 'mocked',
+          reason: 'Development mode prepared the message without sending it',
+        })
+        continue
+      }
 
       // Save to database
       const { error: updateError } = await supabase
@@ -137,8 +202,8 @@ export async function POST(request: NextRequest) {
 
       if (updateError) throw updateError
 
-      results.sent++
-      results.details.push({ jobId: job.id, status: 'sent' })
+      results.submitted++
+      results.details.push({ jobId: job.id, status: 'submitted' })
     } catch (error) {
       console.error(`SMS failed for job ${job.id}:`, error)
       results.failed++

@@ -63,9 +63,9 @@ const FEATURES = [
   {
     icon: MessageSquare,
     color: "bg-green-100 text-green-700",
-    title: "Automated Client SMS",
+    title: "Client Arrival Updates",
     description:
-      "The moment your route is set, Routemaster texts each client their personalized arrival window automatically. Clients love the professionalism. You love not sending 8 manual texts.",
+      "After optimizing, review and send arrival updates to clients who prefer SMS with one clear action. You stay in control of when messages go out.",
   },
   {
     icon: Package,
@@ -87,7 +87,7 @@ const STEPS = [
     number: "02",
     title: "Optimize your route",
     description:
-      "One click. Routemaster calculates the best driving order and texts all your clients.",
+      "Optimize the driving order, then choose when to send arrival updates to clients who prefer SMS.",
   },
   {
     number: "03",
@@ -242,9 +242,9 @@ export default function LandingPage() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="mt-6 text-lg text-gray-600 leading-relaxed"
           >
-            Routemaster automatically optimizes your daily driving route, texts
-            your clients arrival times, and tracks your supplies — so you spend
-            less time planning and more time working.
+            Routemaster optimizes your daily driving route, helps you send
+            arrival updates to clients who prefer SMS, and tracks your supplies
+            — so you spend less time planning and more time working.
           </motion.p>
 
           <motion.div
@@ -500,7 +500,7 @@ export default function LandingPage() {
             <div className="space-y-3 mb-8 text-left">
               {[
                 "Unlimited route optimization",
-                "Automated client SMS notifications",
+                "One-tap client arrival updates",
                 "Supply inventory tracking",
                 "AI-powered personalized messages",
                 "Dashboard analytics",
@@ -565,7 +565,7 @@ export default function LandingPage() {
                 <span className="font-bold text-white">Routemaster</span>
               </div>
               <p className="text-sm max-w-xs leading-relaxed">
-                Route optimization, automated client notifications, and supply
+                Route optimization, client arrival updates, and supply
                 tracking for mobile service professionals.
               </p>
             </div>
