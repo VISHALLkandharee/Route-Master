@@ -10,6 +10,7 @@ import {
   Phone,
   MapPin,
   Users,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +38,7 @@ import {
   type Client,
 } from "@/lib/queries/clients";
 import { ClientFormSheet } from "@/components/dashboard/clients/client-form-sheet";
+import { ClientImportDialog } from "@/components/dashboard/clients/client-import-dialog";
 import { PageTransition } from "@/components/dashboard/page-transition";
 
 const SERVICE_TYPE_LABELS: Record<string, string> = {
@@ -61,6 +63,7 @@ export default function ClientsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [deletingClient, setDeletingClient] = useState<Client | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const filteredClients = useMemo(() => {
     if (!clients) return [];
@@ -102,10 +105,16 @@ export default function ClientsPage() {
               {clients?.length ?? 0} total clients
             </p>
           </div>
-          <Button onClick={openAddSheet}>
-            <Plus className="w-4 h-4 mr-1.5" />
-            Add Client
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <FileSpreadsheet className="w-4 h-4 mr-1.5" />
+              Import CSV
+            </Button>
+            <Button onClick={openAddSheet}>
+              <Plus className="w-4 h-4 mr-1.5" />
+              Add Client
+            </Button>
+          </div>
         </div>
 
         {/* Search */}
@@ -150,6 +159,10 @@ export default function ClientsPage() {
             <Button onClick={openAddSheet}>
               <Plus className="w-4 h-4 mr-1.5" />
               Add Client
+            </Button>
+            <Button variant="outline" className="ml-2" onClick={() => setImportOpen(true)}>
+              <FileSpreadsheet className="w-4 h-4 mr-1.5" />
+              Import existing clients
             </Button>
           </div>
         )}
@@ -245,6 +258,7 @@ export default function ClientsPage() {
           onOpenChange={setFormOpen}
           client={editingClient}
         />
+        <ClientImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
         <AlertDialog
           open={!!deletingClient}

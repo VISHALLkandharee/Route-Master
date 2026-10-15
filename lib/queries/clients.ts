@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import {
+  MAX_CLIENT_IMPORT_ROWS,
+  normalizeClientEmail,
+  normalizeClientPhone,
+  type ImportedClient,
+} from '@/lib/client-csv'
 
 export const clientsQueryKey = ['clients'] as const
 
@@ -108,6 +114,65 @@ export function useCreateClient() {
     onError: () => {
       toast.error('Failed to add client')
     },
+  })
+}
+
+export function useImportClients() {
+  const supabase = createClient()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (clients: ImportedClient[]) => {
+      if (clients.length === 0) throw new Error('There are no valid clients to import.')
+      if (clients.length > MAX_CLIENT_IMPORT_ROWS) {
+        throw new Error(`Import up to ${MAX_CLIENT_IMPORT_ROWS} clients at a time.`)
+      }
+
+      const { data: userData, error: userError } = await supabase.auth.getUser()
+      if (userError || !userData.user) throw new Error('Your session expired. Please log in again.')
+
+      const { data: existing, error: existingError } = await supabase
+        .from('clients')
+        .select('email, phone')
+        .is('deleted_at', null)
+      if (existingError) throw new Error('Could not check for duplicate clients. Please try again.')
+      const existingClients = (existing ?? []) as Array<{ email: string | null; phone: string }>
+
+      const knownEmails = new Set(
+        existingClients.map((client) => normalizeClientEmail(client.email)).filter(Boolean),
+      )
+      const knownPhones = new Set(
+        existingClients.map((client) => normalizeClientPhone(client.phone)).filter(Boolean),
+      )
+      const uniqueClients: ImportedClient[] = []
+      let skipped = 0
+
+      for (const client of clients) {
+        const email = normalizeClientEmail(client.email)
+        const phone = normalizeClientPhone(client.phone)
+        if ((email && knownEmails.has(email)) || (phone && knownPhones.has(phone))) {
+          skipped += 1
+          continue
+        }
+        uniqueClients.push(client)
+        if (email) knownEmails.add(email)
+        if (phone) knownPhones.add(phone)
+      }
+
+      if (uniqueClients.length > 0) {
+        const { error } = await supabase.from('clients').insert(
+          uniqueClients.map((client) => ({ ...client, user_id: userData.user.id })),
+        )
+        if (error) throw new Error('Could not import clients. No clients were added; please retry.')
+      }
+
+      return { imported: uniqueClients.length, skipped }
+    },
+    onSuccess: ({ imported, skipped }) => {
+      queryClient.invalidateQueries({ queryKey: clientsQueryKey })
+      toast.success(`${imported} client${imported === 1 ? '' : 's'} imported${skipped ? `, ${skipped} duplicate${skipped === 1 ? '' : 's'} skipped` : ''}.`)
+    },
+    onError: (error: Error) => toast.error(error.message || 'Could not import clients.'),
   })
 }
 
