@@ -131,13 +131,27 @@ export default function RoutesPage() {
   const updateStatus = useUpdateJobStatus();
 
   const [editedLocations, setEditedLocations] = useState<Record<string, string>>({});
+  const [detectedStartPoint, setDetectedStartPoint] = useState<{
+    date: string;
+    label: string;
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const startLocation =
     (selectedDate ? editedLocations[selectedDate] : undefined) ??
     (route?.start_location || lastStartLocation || "");
 
-  const handleStartLocationChange = (val: string) => {
+  const handleStartLocationChange = (
+    val: string,
+    coordinates?: { latitude: number; longitude: number } | null,
+  ) => {
     if (!selectedDate) return;
     setEditedLocations((prev) => ({ ...prev, [selectedDate]: val }));
+    setDetectedStartPoint(
+      coordinates
+        ? { date: selectedDate, label: val, ...coordinates }
+        : null,
+    );
   };
 
   useEffect(() => {
@@ -163,7 +177,29 @@ export default function RoutesPage() {
 
   const handleOptimize = () => {
     if (!startLocation.trim()) return;
-    optimizeRoute.mutate({ date: selectedDate, startLocation });
+    const detectedCoordinates =
+      detectedStartPoint?.date === selectedDate &&
+      detectedStartPoint.label === startLocation
+        ? {
+            latitude: detectedStartPoint.latitude,
+            longitude: detectedStartPoint.longitude,
+          }
+        : null;
+    const savedCoordinates =
+      route?.start_location === startLocation &&
+      route.start_latitude !== null &&
+      route.start_longitude !== null
+        ? {
+            latitude: route.start_latitude,
+            longitude: route.start_longitude,
+          }
+        : null;
+
+    optimizeRoute.mutate({
+      date: selectedDate,
+      startLocation,
+      startCoordinates: detectedCoordinates ?? savedCoordinates,
+    });
   };
 
   const orderedJobIds = route?.optimization_result?.orderedJobIds ?? [];

@@ -88,7 +88,15 @@ export function useOptimizeRoute() {
   const [error, setError] = useState<string | null>(null)
 
   const mutate = async (
-    { date, startLocation }: { date: string; startLocation: string },
+    {
+      date,
+      startLocation,
+      startCoordinates,
+    }: {
+      date: string;
+      startLocation: string;
+      startCoordinates?: { latitude: number; longitude: number } | null;
+    },
     options?: { onSuccess?: () => void }
   ) => {
     setIsPending(true)
@@ -102,6 +110,7 @@ export function useOptimizeRoute() {
         body: JSON.stringify({
           date,
           start_location: startLocation,
+          start_coordinates: startCoordinates ?? undefined,
         }),
       })
 

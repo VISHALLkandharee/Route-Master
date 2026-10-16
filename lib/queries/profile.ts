@@ -65,7 +65,41 @@ export function useCompleteOnboarding() {
       const { data: userData, error: userError } = await supabase.auth.getUser()
       if (userError || !userData.user) throw new Error('Not authenticated')
 
-      const { error } = await supabase
+      const user = userData.user
+      const email = user.email?.trim().toLowerCase()
+      if (!email) {
+        throw new Error('Your account does not have an email address. Please contact support.')
+      }
+
+      // The auth.users trigger normally creates this profile. Recover if that
+      // trigger was missing or failed during signup, including for existing
+      // accounts, before attempting the onboarding update.
+      const metadataName =
+        user.user_metadata?.full_name ?? user.user_metadata?.name
+      const fullName =
+        (typeof metadataName === 'string' && metadataName.trim()) ||
+        email.split('@')[0] ||
+        'User'
+      const metadataAvatar =
+        user.user_metadata?.avatar_url ?? user.user_metadata?.picture
+
+      const { error: profileError } = await supabase.from('users').upsert(
+        {
+          id: user.id,
+          email,
+          full_name: fullName,
+          ...(typeof metadataAvatar === 'string' && metadataAvatar
+            ? { avatar_url: metadataAvatar }
+            : {}),
+        },
+        { onConflict: 'id', ignoreDuplicates: true },
+      )
+
+      if (profileError) {
+        throw new Error(`Could not prepare your account profile: ${profileError.message}`)
+      }
+
+      const { data: updatedProfile, error } = await supabase
         .from('users')
         .update({
           business_type: data.business_type,
@@ -76,9 +110,14 @@ export function useCompleteOnboarding() {
         })
         .eq('id', userData.user.id)
         .select('id')
-        .single()
+        .maybeSingle()
 
       if (error) throw error
+      // maybeSingle returns null when RLS hides the row or the insert could not
+      // create it. Treat that as a failed save rather than a false success.
+      if (!updatedProfile) {
+        throw new Error('Your account profile could not be found. Please retry or contact support.')
+      }
     },
 
     onSuccess: async () => {

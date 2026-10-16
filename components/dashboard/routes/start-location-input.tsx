@@ -9,7 +9,10 @@ import { toast } from "sonner";
 
 interface StartLocationInputProps {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (
+    value: string,
+    coordinates?: { latitude: number; longitude: number } | null,
+  ) => void;
   disabled?: boolean;
 }
 
@@ -47,14 +50,16 @@ export function StartLocationInput({
       async (position) => {
         const { latitude, longitude } = position.coords;
         const address = await reverseGeocodeClient(latitude, longitude);
-        if (address) {
-          onChange(address);
-          toast.success("Location detected successfully");
-        } else {
-          toast.error(
-            "Could not determine your address. Please type it manually.",
-          );
-        }
+        const locationLabel =
+          address ?? `Current location (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`;
+        // Keep the GPS point: converting it to an address and geocoding it
+        // again can fail for valid coordinates in less well-mapped areas.
+        onChange(locationLabel, { latitude, longitude });
+        toast.success(
+          address
+            ? "Current location detected"
+            : "Current coordinates detected; using them as your start point",
+        );
         setDetecting(false);
       },
       (err) => {
@@ -84,7 +89,7 @@ export function StartLocationInput({
           id="start_location"
           placeholder="Your home or shop address"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value, null)}
           disabled={disabled || detecting}
           className="flex-1"
         />
