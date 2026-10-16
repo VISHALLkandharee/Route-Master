@@ -36,8 +36,7 @@ const STEP_ORDER = [
   "backfill",
   "optimizing",
   "directions",
-  "saving",
-  "complete",
+  "preview",
 ];
 
 function ProgressIndicator({
@@ -57,7 +56,7 @@ function ProgressIndicator({
       className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4"
     >
       <div className="flex items-center gap-2 mb-3">
-        {progress.step === "complete" ? (
+        {progress.step === "preview" ? (
           <CheckCircle2 className="w-4 h-4 text-green-600" />
         ) : (
           <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
@@ -231,6 +230,18 @@ export default function RoutesPage() {
 
   const geometry = route?.optimization_result?.geometry ?? [];
 
+  const proposalStops = optimizeRoute.proposal?.stops ?? [];
+  const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
+    ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
+    : null;
+  const proposalDriveTimeChangeMinutes = optimizeRoute.proposal?.currentDriveDurationSeconds !== null && optimizeRoute.proposal?.currentDriveDurationSeconds !== undefined
+    ? (optimizeRoute.proposal.currentDriveDurationSeconds - optimizeRoute.proposal.driveDurationSeconds) / 60
+    : null;
+  const hasAppointmentOrderConflict = proposalStops.some((stop, index) => {
+    const previousTime = proposalStops[index - 1]?.scheduledTime;
+    return index > 0 && !!previousTime && !!stop.scheduledTime && previousTime > stop.scheduledTime;
+  });
+
   const formatDuration = (mins: number) => {
     const h = Math.floor(mins / 60);
     const m = Math.round(mins % 60);
@@ -325,6 +336,60 @@ export default function RoutesPage() {
                 <AnimatePresence>
                   <ProgressIndicator progress={optimizeRoute.progress} />
                 </AnimatePresence>
+
+                {optimizeRoute.proposal && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4" aria-live="polite">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">Review your proposed day</h3>
+                        <p className="text-sm text-gray-600">
+                          {optimizeRoute.proposal.orderedJobIds.length} stops · {(
+                            optimizeRoute.proposal.distanceMeters / 1000
+                          ).toFixed(1)} km · {formatDuration(optimizeRoute.proposal.driveDurationSeconds / 60)} driving · {formatDuration(optimizeRoute.proposal.serviceDurationMinutes)} on-site
+                        </p>
+                        {proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
+                          <p className="mt-1 text-sm font-medium text-blue-800">
+                            Compared with the current stop order: {Math.abs(proposalDistanceChangeKm).toFixed(1)} km {proposalDistanceChangeKm >= 0 ? "shorter" : "longer"} and {formatDuration(Math.abs(proposalDriveTimeChangeMinutes))} {proposalDriveTimeChangeMinutes >= 0 ? "less" : "more"} estimated driving.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {hasAppointmentOrderConflict && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                        This stop order conflicts with the appointment times currently saved for these jobs. Update the appointment times, then optimize again before applying this route.
+                      </p>
+                    )}
+
+                    <ol className="mt-3 max-h-64 space-y-2 overflow-y-auto" aria-label="Proposed stop order">
+                      {proposalStops.map((stop, index) => {
+                        const job = jobs?.find((item) => item.id === stop.jobId);
+                        return (
+                          <li key={stop.jobId} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700">{index + 1}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium text-gray-900">{job?.title ?? "Scheduled job"} — {job?.client?.full_name ?? "Client"}</span>
+                              <span className="text-gray-500">{stop.scheduledTime?.slice(0, 5) ?? "Time not set"} · {stop.estimatedDurationMinutes ?? 0} min service</span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+
+                    {optimizeRoute.proposal.skippedJobIds.length > 0 && (
+                      <p className="mt-3 text-sm text-amber-800">
+                        {optimizeRoute.proposal.skippedJobIds.length} job(s) could not be included in this proposal. Check their addresses and route details before planning again.
+                      </p>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                      <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
+                      <Button onClick={optimizeRoute.apply} disabled={hasAppointmentOrderConflict || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : "Apply this route"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {route && !optimizeRoute.isPending && (
                   <Button

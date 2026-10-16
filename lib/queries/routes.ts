@@ -66,14 +66,20 @@ export function useLastStartLocation() {
 
 // ─── Optimize ─────────────────────────────────────────────────
 
-interface OptimizeInput {
+export interface RouteProposal {
   date: string
   startLocation: string
-}
-
-interface OptimizeResponse {
-  route: RouteRecord
+  startLatitude: number
+  startLongitude: number
+  orderedJobIds: string[]
   skippedJobIds: string[]
+  distanceMeters: number
+  driveDurationSeconds: number
+  currentDistanceMeters: number | null
+  currentDriveDurationSeconds: number | null
+  serviceDurationMinutes: number
+  geometry: [number, number][]
+  stops: { jobId: string; scheduledTime?: string; estimatedDurationMinutes?: number }[]
 }
 
 export interface OptimizeProgress {
@@ -86,6 +92,8 @@ export function useOptimizeRoute() {
   const [progress, setProgress] = useState<OptimizeProgress | null>(null)
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [proposal, setProposal] = useState<RouteProposal | null>(null)
+  const [isApplying, setIsApplying] = useState(false)
 
   const mutate = async (
     {
@@ -96,12 +104,12 @@ export function useOptimizeRoute() {
       date: string;
       startLocation: string;
       startCoordinates?: { latitude: number; longitude: number } | null;
-    },
-    options?: { onSuccess?: () => void }
+    }
   ) => {
     setIsPending(true)
     setError(null)
     setProgress(null)
+    setProposal(null)
 
     try {
       const response = await fetch('/api/routes/optimize', {
@@ -141,25 +149,9 @@ export function useOptimizeRoute() {
               return
             }
 
-            if (data.step === 'complete') {
-              queryClient.invalidateQueries({
-                queryKey: routesQueryKey(date),
-              })
-              queryClient.invalidateQueries({
-                queryKey: jobsQueryKey(date),
-              })
-
-              if (data.skippedJobIds?.length > 0) {
-                toast.warning(
-                  `Route optimized — ${data.skippedJobIds.length} job(s) skipped (address not found)`
-                )
-              } else {
-                toast.success('Route optimized successfully')
-              }
-
-              setProgress({ step: 'complete', message: 'Route optimized!' })
-              setTimeout(() => setProgress(null), 2000)
-              options?.onSuccess?.()
+            if (data.step === 'preview' && data.proposal) {
+              setProposal(data.proposal as RouteProposal)
+              setProgress({ step: 'preview', message: 'Route proposal ready to review.' })
               setIsPending(false)
               return
             }
@@ -170,7 +162,7 @@ export function useOptimizeRoute() {
           }
         }
       }
-    } catch (err) {
+    } catch {
       const message = 'Failed to optimize route. Please try again.'
       setError(message)
       toast.error(message)
@@ -179,7 +171,46 @@ export function useOptimizeRoute() {
     }
   }
 
-  return { mutate, isPending, progress, error }
+  const apply = async () => {
+    if (!proposal) return
+    setIsApplying(true)
+    try {
+      const response = await fetch('/api/routes/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: proposal.date,
+          startLocation: proposal.startLocation,
+          startLatitude: proposal.startLatitude,
+          startLongitude: proposal.startLongitude,
+          orderedJobIds: proposal.orderedJobIds,
+          skippedJobIds: proposal.skippedJobIds,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to save the reviewed route.')
+
+      queryClient.invalidateQueries({ queryKey: routesQueryKey(proposal.date) })
+      queryClient.invalidateQueries({ queryKey: jobsQueryKey(proposal.date) })
+      toast.success('Reviewed route saved.')
+      setProposal(null)
+      setProgress(null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save the reviewed route.'
+      setError(message)
+      toast.error(message)
+    } finally {
+      setIsApplying(false)
+    }
+  }
+
+  const discard = () => {
+    setProposal(null)
+    setProgress(null)
+    setError(null)
+  }
+
+  return { mutate, isPending, isApplying, progress, error, proposal, apply, discard }
 }
 
 

@@ -4,12 +4,15 @@ export interface OptimizeJob {
   id: string
   latitude: number
   longitude: number
+  estimatedDurationMinutes: number
 }
 
 export interface OptimizeResult {
   orderedJobIds: string[]
+  unassignedJobIds: string[]
   distanceMeters: number
   durationSeconds: number
+  stops: { jobId: string; arrivalSeconds: number; serviceSeconds: number }[]
 }
 
 export async function optimizeRoute(
@@ -20,7 +23,7 @@ export async function optimizeRoute(
   if (!apiKey) throw new Error('OPENROUTESERVICE_API_KEY is not set')
 
   if (jobs.length === 0) {
-    return { orderedJobIds: [], distanceMeters: 0, durationSeconds: 0 }
+    return { orderedJobIds: [], unassignedJobIds: [], distanceMeters: 0, durationSeconds: 0, stops: [] }
   }
 
   // VROOM (the engine behind ORS optimization) requires integer job IDs.
@@ -34,7 +37,7 @@ const body = {
   jobs: jobs.map((job, index) => ({
     id: index + 1,
     location: [job.longitude, job.latitude],
-    service: 1800,
+    service: Math.round(job.estimatedDurationMinutes * 60),
   })),
   vehicles: [
     {
@@ -63,14 +66,26 @@ const response = await fetch(`${ORS_BASE_URL}/optimization`, {
   const route = data?.routes?.[0]
   if (!route) return null
 
-  const orderedJobIds: string[] = route.steps
-    .filter((step: { type: string }) => step.type === 'job')
+  const jobSteps = route.steps.filter((step: { type: string }) => step.type === 'job')
+  const orderedJobIds: string[] = jobSteps
     .map((step: { id: number }) => idMap.get(step.id))
+    .filter((id: string | undefined): id is string => !!id)
+
+  const stops = jobSteps.flatMap((step: { id: number; arrival: number; service: number }) => {
+    const jobId = idMap.get(step.id)
+    return jobId
+      ? [{ jobId, arrivalSeconds: step.arrival, serviceSeconds: step.service }]
+      : []
+  })
+  const unassignedJobIds: string[] = (data?.unassigned ?? [])
+    .map((job: { id: number }) => idMap.get(job.id))
     .filter((id: string | undefined): id is string => !!id)
 
   return {
     orderedJobIds,
+    unassignedJobIds,
     distanceMeters: route.distance,
     durationSeconds: route.duration,
+    stops,
   }
 }

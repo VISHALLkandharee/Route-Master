@@ -14,6 +14,9 @@ interface JobRow {
   address: string
   latitude: number | null
   longitude: number | null
+  scheduled_time: string
+  estimated_duration: number
+  order_index: number
 }
 
 export async function POST(request: NextRequest) {
@@ -194,7 +197,7 @@ export async function POST(request: NextRequest) {
 
         const { data: jobs, error: jobsError } = await supabase
           .from('jobs')
-          .select('id, client_id, address, latitude, longitude')
+          .select('id, client_id, address, latitude, longitude, scheduled_time, estimated_duration, order_index')
           .eq('scheduled_date', date)
           .in('status', ['pending', 'in_progress'])
           .is('deleted_at', null)
@@ -222,14 +225,20 @@ export async function POST(request: NextRequest) {
           id: string
           latitude: number
           longitude: number
+          scheduledTime: string
+          estimatedDurationMinutes: number
+          orderIndex: number
         }[] = []
 
         for (const job of jobs as JobRow[]) {
-          if (job.latitude && job.longitude) {
+          if (typeof job.latitude === 'number' && typeof job.longitude === 'number') {
             routableJobs.push({
               id: job.id,
               latitude: job.latitude,
               longitude: job.longitude,
+              scheduledTime: job.scheduled_time,
+              estimatedDurationMinutes: job.estimated_duration,
+              orderIndex: job.order_index,
             })
             continue
           }
@@ -261,6 +270,9 @@ export async function POST(request: NextRequest) {
             id: job.id,
             latitude: geocoded.latitude,
             longitude: geocoded.longitude,
+            scheduledTime: job.scheduled_time,
+            estimatedDurationMinutes: job.estimated_duration,
+            orderIndex: job.order_index,
           })
         }
 
@@ -281,7 +293,12 @@ export async function POST(request: NextRequest) {
 
         const optimizeResult = await optimizeRoute(
           { latitude: startLatitude!, longitude: startLongitude! },
-          routableJobs
+          routableJobs.map(({ id, latitude, longitude, estimatedDurationMinutes }) => ({
+            id,
+            latitude,
+            longitude,
+            estimatedDurationMinutes,
+          }))
         )
 
         if (!optimizeResult) {
@@ -293,6 +310,10 @@ export async function POST(request: NextRequest) {
           controller.close()
           return
         }
+
+        const skippedWithNoRoute = [
+          ...new Set([...skippedJobIds, ...optimizeResult.unassignedJobIds]),
+        ]
 
         // ── Step 5: Driving directions ───────────────────────────
         send({
@@ -310,70 +331,61 @@ export async function POST(request: NextRequest) {
 
         const directions = await getDirections(orderedCoords)
 
-        // ── Step 6: Save ─────────────────────────────────────────
-        send({ step: 'saving', message: 'Saving your optimized route...' })
-
-        await Promise.all(
-          optimizeResult.orderedJobIds.map((jobId, index) =>
-            supabase
-              .from('jobs')
-              .update({ order_index: index })
-              .eq('id', jobId)
-          )
-        )
-
-        const { data: existing } = await supabase
+        const { data: currentRoute } = await supabase
           .from('routes')
-          .select('id')
+          .select('optimization_result')
           .eq('scheduled_date', date)
           .maybeSingle()
+        const routableById = new Map(routableJobs.map((job) => [job.id, job]))
+        const priorOrderedIds = Array.isArray(currentRoute?.optimization_result?.orderedJobIds)
+          ? currentRoute.optimization_result.orderedJobIds.filter(
+              (id: unknown): id is string => typeof id === 'string' && routableById.has(id)
+            )
+          : []
+        const baselineIds = [
+          ...priorOrderedIds,
+          ...[...routableJobs]
+            .sort((a, b) => a.orderIndex - b.orderIndex || a.scheduledTime.localeCompare(b.scheduledTime))
+            .map((job) => job.id)
+            .filter((id) => !priorOrderedIds.includes(id)),
+        ]
+        const baselineDirections = await getDirections([
+          [startLongitude!, startLatitude!],
+          ...baselineIds.flatMap((jobId) => {
+            const job = routableById.get(jobId)
+            return job ? [[job.longitude, job.latitude] as [number, number]] : []
+          }),
+        ])
 
-        const { data: savedRoute, error: upsertError } = await supabase
-          .from('routes')
-          .upsert(
-            {
-              user_id: userId,
-              scheduled_date: date,
-              status: 'optimized',
-              total_distance_km: Math.round(
-                ((directions
-                  ? directions.distanceMeters
-                  : optimizeResult.distanceMeters) /
-                  1000) *
-                  10
-              ) / 10,
-              total_duration_mins: Math.round(
-                (directions
-                  ? directions.durationSeconds
-                  : optimizeResult.durationSeconds) / 60
-              ),
-              start_location: startLocationText,
-              start_latitude: startLatitude,
-              start_longitude: startLongitude,
-              optimization_result: {
-                orderedJobIds: optimizeResult.orderedJobIds,
-                geometry: directions?.geometry ?? [],
-              },
-              is_recalculated: !!existing,
-              recalculated_at: existing ? new Date().toISOString() : null,
-            },
-            { onConflict: 'user_id,scheduled_date' }
-          )
-          .select()
-          .single()
-
-        if (upsertError) {
-          console.error('Route upsert error:', JSON.stringify(upsertError))
-          send({ step: 'error', message: 'Failed to save the optimized route.' })
-          controller.close()
-          return
-        }
-
-        // ── Complete ─────────────────────────────────────────────
+        // Optimization is a proposal only. Saving is deferred until the user
+        // reviews and confirms the stop order in the dashboard.
         send({
-          step: 'complete',
-          route: savedRoute,
-          skippedJobIds,
+          step: 'preview',
+          proposal: {
+            date,
+            startLocation: startLocationText,
+            startLatitude,
+            startLongitude,
+            orderedJobIds: optimizeResult.orderedJobIds,
+            skippedJobIds: skippedWithNoRoute,
+            distanceMeters: directions?.distanceMeters ?? optimizeResult.distanceMeters,
+            driveDurationSeconds: directions?.durationSeconds ?? optimizeResult.durationSeconds,
+            currentDistanceMeters: baselineDirections?.distanceMeters ?? null,
+            currentDriveDurationSeconds: baselineDirections?.durationSeconds ?? null,
+            serviceDurationMinutes: routableJobs.reduce(
+              (total, job) => total + job.estimatedDurationMinutes,
+              0
+            ),
+            geometry: directions?.geometry ?? [],
+            stops: optimizeResult.stops.map((stop) => {
+              const job = routableJobs.find((candidate) => candidate.id === stop.jobId)
+              return {
+                jobId: stop.jobId,
+                scheduledTime: job?.scheduledTime,
+                estimatedDurationMinutes: job?.estimatedDurationMinutes,
+              }
+            }),
+          },
         })
         controller.close()
       } catch (error) {
