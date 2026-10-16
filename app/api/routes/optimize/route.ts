@@ -95,6 +95,10 @@ export async function POST(request: NextRequest) {
           typeof body === 'object' && body !== null && 'start_location' in body
             ? (body as { start_location?: unknown }).start_location
             : null
+        const rawStartCoordinates =
+          typeof body === 'object' && body !== null && 'start_coordinates' in body
+            ? (body as { start_coordinates?: unknown }).start_coordinates
+            : null
 
         if (!isDateOnly(date)) {
           send({ step: 'error', message: 'A date is required.' })
@@ -107,20 +111,57 @@ export async function POST(request: NextRequest) {
           return
         }
 
+        let requestedStartCoordinates: { latitude: number; longitude: number } | null = null
+        if (rawStartCoordinates !== null && rawStartCoordinates !== undefined) {
+          if (
+            typeof rawStartCoordinates !== 'object' ||
+            !('latitude' in rawStartCoordinates) ||
+            !('longitude' in rawStartCoordinates) ||
+            typeof rawStartCoordinates.latitude !== 'number' ||
+            typeof rawStartCoordinates.longitude !== 'number' ||
+            !Number.isFinite(rawStartCoordinates.latitude) ||
+            !Number.isFinite(rawStartCoordinates.longitude) ||
+            rawStartCoordinates.latitude < -90 ||
+            rawStartCoordinates.latitude > 90 ||
+            rawStartCoordinates.longitude < -180 ||
+            rawStartCoordinates.longitude > 180
+          ) {
+            send({ step: 'error', message: 'Start coordinates are invalid. Please detect your location again.' })
+            controller.close()
+            return
+          }
+          requestedStartCoordinates = {
+            latitude: rawStartCoordinates.latitude,
+            longitude: rawStartCoordinates.longitude,
+          }
+        }
+
         // ── Step 1: Geocode start location ───────────────────────
-        send({ step: 'geocoding', message: 'Locating your start address...' })
+        send({
+          step: 'geocoding',
+          message: requestedStartCoordinates
+            ? 'Using your detected start location...'
+            : 'Locating your start address...',
+        })
 
         let startLatitude: number | null = null
         let startLongitude: number | null = null
         let startLocationText: string | null = null
 
-        if (typeof start_location === 'string' && start_location.trim()) {
+        if (requestedStartCoordinates) {
+          startLatitude = requestedStartCoordinates.latitude
+          startLongitude = requestedStartCoordinates.longitude
+          startLocationText =
+            typeof start_location === 'string' && start_location.trim()
+              ? start_location.trim()
+              : `Current location (${startLatitude.toFixed(5)}, ${startLongitude.toFixed(5)})`
+        } else if (typeof start_location === 'string' && start_location.trim()) {
           const geocoded = await geocodeAddress(start_location.trim())
           if (!geocoded) {
             send({
               step: 'error',
               message:
-                'Could not locate that start address. Please check it and try again.',
+                'Could not locate that start address. Use the location pin or enter a more specific address.',
             })
             controller.close()
             return
