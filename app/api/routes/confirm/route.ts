@@ -53,6 +53,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'The route proposal is invalid. Please optimize it again.' }, { status: 400 })
   }
 
+  // A reviewed route is only safe to apply when every active job is included.
+  // Skipped jobs may have failed geocoding or appointment feasibility checks;
+  // accepting a partial route here would silently leave work off the day plan.
+  if (skippedJobIds.length > 0) {
+    return NextResponse.json(
+      { error: 'Every scheduled job must be routable before this plan can be saved. Fix the unresolved stops and optimize again.' },
+      { status: 409 }
+    )
+  }
+
   try {
     const supabase = await createClient()
     const { data: userData, error: userError } = await supabase.auth.getUser()

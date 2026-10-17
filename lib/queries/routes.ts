@@ -73,6 +73,9 @@ export interface RouteProposal {
   startLongitude: number
   orderedJobIds: string[]
   skippedJobIds: string[]
+  unlocatedJobIds: string[]
+  infeasibleJobIds: string[]
+  totalJobCount: number
   distanceMeters: number
   driveDurationSeconds: number
   currentDistanceMeters: number | null
@@ -93,6 +96,7 @@ export function useOptimizeRoute() {
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [proposal, setProposal] = useState<RouteProposal | null>(null)
+  const [appliedProposal, setAppliedProposal] = useState<RouteProposal | null>(null)
   const [isApplying, setIsApplying] = useState(false)
 
   const mutate = async (
@@ -110,6 +114,7 @@ export function useOptimizeRoute() {
     setError(null)
     setProgress(null)
     setProposal(null)
+    setAppliedProposal(null)
 
     try {
       const response = await fetch('/api/routes/optimize', {
@@ -192,6 +197,7 @@ export function useOptimizeRoute() {
 
       queryClient.invalidateQueries({ queryKey: routesQueryKey(proposal.date) })
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(proposal.date) })
+      setAppliedProposal(proposal)
       toast.success('Reviewed route saved.')
       setProposal(null)
       setProgress(null)
@@ -205,12 +211,15 @@ export function useOptimizeRoute() {
   }
 
   const discard = () => {
+    if (proposal) toast.info('Proposal discarded. Your saved route was not changed.')
     setProposal(null)
     setProgress(null)
     setError(null)
   }
 
-  return { mutate, isPending, isApplying, progress, error, proposal, apply, discard }
+  const dismissApplied = () => setAppliedProposal(null)
+
+  return { mutate, isPending, isApplying, progress, error, proposal, appliedProposal, apply, discard, dismissApplied }
 }
 
 

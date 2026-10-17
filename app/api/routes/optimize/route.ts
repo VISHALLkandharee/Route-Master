@@ -6,6 +6,7 @@ import { getDirections } from '@/lib/ors/directions'
 import { rateLimit } from '@/lib/rate-limit'
 import { getSubscriptionAccess } from '@/lib/subscription-access'
 import { isDateOnly } from '@/lib/validation'
+import { nextDateOnly, zonedTimeToUnixSeconds } from '@/lib/time/zoned-time'
 
 
 interface JobRow {
@@ -49,6 +50,17 @@ export async function POST(request: NextRequest) {
           return
         }
         const userId = userData.user.id
+
+        const { data: profile, error: profileError } = await supabase
+          .from('users')
+          .select('timezone')
+          .eq('id', userId)
+          .maybeSingle()
+        if (profileError || !profile?.timezone) {
+          send({ step: 'error', message: 'Your account timezone is unavailable. Update it in Settings, then try again.' })
+          controller.close()
+          return
+        }
 
         const access = await getSubscriptionAccess(supabase, userId)
         if (access.status !== 'allowed') {
@@ -214,6 +226,28 @@ export async function POST(request: NextRequest) {
           return
         }
 
+        const nextDate = nextDateOnly(date)
+        const vehicleStart = zonedTimeToUnixSeconds(date, '00:00:00', profile.timezone)
+        const vehicleEnd = nextDate
+          ? zonedTimeToUnixSeconds(nextDate, '23:59:59', profile.timezone)
+          : null
+        if (vehicleStart === null || vehicleEnd === null) {
+          send({ step: 'error', message: 'Could not interpret this workday in your account timezone. Check Settings and try again.' })
+          controller.close()
+          return
+        }
+
+        const appointmentTimes = new Map<string, number>()
+        for (const job of jobs as JobRow[]) {
+          const appointmentTime = zonedTimeToUnixSeconds(date, job.scheduled_time, profile.timezone)
+          if (appointmentTime === null) {
+            send({ step: 'error', message: 'A job has an invalid or unavailable appointment time. Correct its schedule, then optimize again.' })
+            controller.close()
+            return
+          }
+          appointmentTimes.set(job.id, appointmentTime)
+        }
+
         // ── Step 3: Backfill missing coordinates ─────────────────
         send({
           step: 'backfill',
@@ -228,6 +262,7 @@ export async function POST(request: NextRequest) {
           scheduledTime: string
           estimatedDurationMinutes: number
           orderIndex: number
+          timeWindow: [number, number]
         }[] = []
 
         for (const job of jobs as JobRow[]) {
@@ -239,6 +274,7 @@ export async function POST(request: NextRequest) {
               scheduledTime: job.scheduled_time,
               estimatedDurationMinutes: job.estimated_duration,
               orderIndex: job.order_index,
+              timeWindow: [appointmentTimes.get(job.id)!, appointmentTimes.get(job.id)!],
             })
             continue
           }
@@ -273,6 +309,7 @@ export async function POST(request: NextRequest) {
             scheduledTime: job.scheduled_time,
             estimatedDurationMinutes: job.estimated_duration,
             orderIndex: job.order_index,
+            timeWindow: [appointmentTimes.get(job.id)!, appointmentTimes.get(job.id)!],
           })
         }
 
@@ -293,12 +330,14 @@ export async function POST(request: NextRequest) {
 
         const optimizeResult = await optimizeRoute(
           { latitude: startLatitude!, longitude: startLongitude! },
-          routableJobs.map(({ id, latitude, longitude, estimatedDurationMinutes }) => ({
-            id,
-            latitude,
-            longitude,
-            estimatedDurationMinutes,
-          }))
+          routableJobs.map((job) => ({
+            id: job.id,
+            latitude: job.latitude,
+            longitude: job.longitude,
+            estimatedDurationMinutes: job.estimatedDurationMinutes,
+            timeWindow: job.timeWindow,
+          })),
+          [vehicleStart, vehicleEnd]
         )
 
         if (!optimizeResult) {
@@ -306,6 +345,15 @@ export async function POST(request: NextRequest) {
             step: 'error',
             message:
               'Route optimization service is unavailable right now. Please try again shortly.',
+          })
+          controller.close()
+          return
+        }
+
+        if (optimizeResult.orderedJobIds.length === 0) {
+          send({
+            step: 'error',
+            message: 'No route can meet these appointment times from the selected start location. Adjust the schedule or start location and try again.',
           })
           controller.close()
           return
@@ -368,14 +416,17 @@ export async function POST(request: NextRequest) {
             startLongitude,
             orderedJobIds: optimizeResult.orderedJobIds,
             skippedJobIds: skippedWithNoRoute,
+            unlocatedJobIds: skippedJobIds,
+            infeasibleJobIds: optimizeResult.unassignedJobIds,
+            totalJobCount: jobs.length,
             distanceMeters: directions?.distanceMeters ?? optimizeResult.distanceMeters,
             driveDurationSeconds: directions?.durationSeconds ?? optimizeResult.durationSeconds,
             currentDistanceMeters: baselineDirections?.distanceMeters ?? null,
             currentDriveDurationSeconds: baselineDirections?.durationSeconds ?? null,
-            serviceDurationMinutes: routableJobs.reduce(
-              (total, job) => total + job.estimatedDurationMinutes,
-              0
-            ),
+            serviceDurationMinutes: optimizeResult.orderedJobIds.reduce((total, jobId) => {
+              const job = routableById.get(jobId)
+              return total + (job?.estimatedDurationMinutes ?? 0)
+            }, 0),
             geometry: directions?.geometry ?? [],
             stops: optimizeResult.stops.map((stop) => {
               const job = routableJobs.find((candidate) => candidate.id === stop.jobId)

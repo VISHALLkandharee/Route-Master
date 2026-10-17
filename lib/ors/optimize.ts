@@ -5,6 +5,7 @@ export interface OptimizeJob {
   latitude: number
   longitude: number
   estimatedDurationMinutes: number
+  timeWindow: [number, number]
 }
 
 export interface OptimizeResult {
@@ -17,7 +18,8 @@ export interface OptimizeResult {
 
 export async function optimizeRoute(
   start: { latitude: number; longitude: number },
-  jobs: OptimizeJob[]
+  jobs: OptimizeJob[],
+  vehicleTimeWindow: [number, number]
 ): Promise<OptimizeResult | null> {
   const apiKey = process.env.OPENROUTESERVICE_API_KEY
   if (!apiKey) throw new Error('OPENROUTESERVICE_API_KEY is not set')
@@ -38,12 +40,14 @@ const body = {
     id: index + 1,
     location: [job.longitude, job.latitude],
     service: Math.round(job.estimatedDurationMinutes * 60),
+    time_windows: [job.timeWindow],
   })),
   vehicles: [
     {
       id: 1,
       profile: 'driving-car',
       start: [start.longitude, start.latitude],
+      time_window: vehicleTimeWindow,
     },
   ],
 }
@@ -64,7 +68,15 @@ const response = await fetch(`${ORS_BASE_URL}/optimization`, {
 
   const data = await response.json()
   const route = data?.routes?.[0]
-  if (!route) return null
+  const unassignedJobIds: string[] = (data?.unassigned ?? [])
+    .map((job: { id: number }) => idMap.get(job.id))
+    .filter((id: string | undefined): id is string => !!id)
+  if (!route) {
+    if (unassignedJobIds.length === jobs.length) {
+      return { orderedJobIds: [], unassignedJobIds, distanceMeters: 0, durationSeconds: 0, stops: [] }
+    }
+    return null
+  }
 
   const jobSteps = route.steps.filter((step: { type: string }) => step.type === 'job')
   const orderedJobIds: string[] = jobSteps
@@ -77,10 +89,6 @@ const response = await fetch(`${ORS_BASE_URL}/optimization`, {
       ? [{ jobId, arrivalSeconds: step.arrival, serviceSeconds: step.service }]
       : []
   })
-  const unassignedJobIds: string[] = (data?.unassigned ?? [])
-    .map((job: { id: number }) => idMap.get(job.id))
-    .filter((id: string | undefined): id is string => !!id)
-
   return {
     orderedJobIds,
     unassignedJobIds,

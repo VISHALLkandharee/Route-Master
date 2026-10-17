@@ -231,6 +231,7 @@ export default function RoutesPage() {
   const geometry = route?.optimization_result?.geometry ?? [];
 
   const proposalStops = optimizeRoute.proposal?.stops ?? [];
+  const proposalIsComplete = !!optimizeRoute.proposal && optimizeRoute.proposal.skippedJobIds.length === 0;
   const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
     ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
     : null;
@@ -343,17 +344,23 @@ export default function RoutesPage() {
                       <div>
                         <h3 className="font-semibold text-gray-900">Review your proposed day</h3>
                         <p className="text-sm text-gray-600">
-                          {optimizeRoute.proposal.orderedJobIds.length} stops · {(
+                          {optimizeRoute.proposal.orderedJobIds.length} of {optimizeRoute.proposal.totalJobCount} stops schedulable · {(
                             optimizeRoute.proposal.distanceMeters / 1000
                           ).toFixed(1)} km · {formatDuration(optimizeRoute.proposal.driveDurationSeconds / 60)} driving · {formatDuration(optimizeRoute.proposal.serviceDurationMinutes)} on-site
                         </p>
-                        {proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
+                        {proposalIsComplete && proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
                           <p className="mt-1 text-sm font-medium text-blue-800">
                             Compared with the current stop order: {Math.abs(proposalDistanceChangeKm).toFixed(1)} km {proposalDistanceChangeKm >= 0 ? "shorter" : "longer"} and {formatDuration(Math.abs(proposalDriveTimeChangeMinutes))} {proposalDriveTimeChangeMinutes >= 0 ? "less" : "more"} estimated driving.
                           </p>
                         )}
                       </div>
                     </div>
+
+                    {optimizeRoute.proposal.orderedJobIds.length === 1 && (
+                      <p className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm text-gray-700">
+                        This day has one stop, so there is no stop order to improve. The estimate shows the trip from your start location to that client.
+                      </p>
+                    )}
 
                     {hasAppointmentOrderConflict && (
                       <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
@@ -376,18 +383,38 @@ export default function RoutesPage() {
                       })}
                     </ol>
 
-                    {optimizeRoute.proposal.skippedJobIds.length > 0 && (
-                      <p className="mt-3 text-sm text-amber-800">
-                        {optimizeRoute.proposal.skippedJobIds.length} job(s) could not be included in this proposal. Check their addresses and route details before planning again.
+                    {optimizeRoute.proposal.unlocatedJobIds.length > 0 && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                        {optimizeRoute.proposal.unlocatedJobIds.length} job(s) have addresses that could not be located. Correct the addresses, then optimize again.
+                      </p>
+                    )}
+                    {optimizeRoute.proposal.infeasibleJobIds.length > 0 && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                        {optimizeRoute.proposal.infeasibleJobIds.length} job(s) could not fit their appointment times from this start location. Check the appointment times and start location, then optimize again.
                       </p>
                     )}
 
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
                       <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
-                      <Button onClick={optimizeRoute.apply} disabled={hasAppointmentOrderConflict || optimizeRoute.isApplying}>
-                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : "Apply this route"}
+                      <Button onClick={optimizeRoute.apply} disabled={!proposalIsComplete || hasAppointmentOrderConflict || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : proposalIsComplete ? "Apply this route" : "Resolve stops before applying"}
                       </Button>
                     </div>
+                  </div>
+                )}
+
+                {optimizeRoute.appliedProposal?.date === selectedDate && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-green-200 bg-green-50 p-4 sm:flex-row sm:items-center sm:justify-between" role="status" aria-live="polite">
+                    <div className="flex items-start gap-3">
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-700" />
+                      <div>
+                        <h3 className="font-semibold text-green-900">Route applied and saved</h3>
+                        <p className="text-sm text-green-800">
+                          {optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
+                        </p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={optimizeRoute.dismissApplied}>Dismiss</Button>
                   </div>
                 )}
 
