@@ -38,10 +38,14 @@ const jobSchema = z.object({
   title: z.string().min(2, "Title is required"),
   scheduled_date: z.string().min(1, "Date is required"),
   scheduled_time: z.string().min(1, "Time is required"),
+  latest_start_time: z.string(),
   estimated_duration: z.number().min(15, "Minimum 15 minutes"),
   price: z.number().optional(),
   notes: z.string().optional(),
-});
+}).refine(
+  (data) => !data.latest_start_time || data.latest_start_time > data.scheduled_time,
+  { message: "Latest start must be after earliest start", path: ["latest_start_time"] },
+);
 
 type JobFormData = z.infer<typeof jobSchema>;
 
@@ -80,6 +84,7 @@ export function JobFormSheet({
       title: "",
       scheduled_date: defaultDate,
       scheduled_time: "09:00",
+      latest_start_time: "",
       estimated_duration: 60,
       price: undefined,
       notes: "",
@@ -94,7 +99,8 @@ export function JobFormSheet({
             client_id: job.client_id,
             title: job.title,
             scheduled_date: job.scheduled_date,
-            scheduled_time: job.scheduled_time,
+            scheduled_time: job.scheduled_time.slice(0, 5),
+            latest_start_time: job.latest_start_time?.slice(0, 5) ?? "",
             estimated_duration: job.estimated_duration,
             price: job.price ?? undefined,
             notes: job.notes ?? "",
@@ -104,6 +110,7 @@ export function JobFormSheet({
             title: "",
             scheduled_date: defaultDate,
             scheduled_time: "09:00",
+            latest_start_time: "",
             estimated_duration: 60,
             price: undefined,
             notes: "",
@@ -116,11 +123,14 @@ export function JobFormSheet({
   const onSubmit = (data: JobFormData) => {
     if (isEdit && job) {
       updateJob.mutate(
-        { id: job.id, ...data },
+        { id: job.id, ...data, latest_start_time: data.latest_start_time || null },
         { onSuccess: () => onOpenChange(false) },
       );
     } else {
-      createJob.mutate(data, { onSuccess: () => onOpenChange(false) });
+      createJob.mutate(
+        { ...data, latest_start_time: data.latest_start_time || null },
+        { onSuccess: () => onOpenChange(false) },
+      );
     }
   };
 
@@ -211,7 +221,7 @@ export function JobFormSheet({
               )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="scheduled_time">Time</Label>
+              <Label htmlFor="scheduled_time">Earliest start</Label>
               <Input
                 id="scheduled_time"
                 type="time"
@@ -224,6 +234,22 @@ export function JobFormSheet({
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="latest_start_time">Latest start (optional)</Label>
+            <Input
+              id="latest_start_time"
+              type="time"
+              disabled={isLocked}
+              {...register("latest_start_time")}
+            />
+            <p className="text-xs text-gray-500">
+              Leave blank for an exact appointment. When set, the route planner can schedule this job to start any time in this window.
+            </p>
+            {errors.latest_start_time && (
+              <p className="text-red-500 text-xs">{errors.latest_start_time.message}</p>
+            )}
           </div>
 
           {isLocked && (

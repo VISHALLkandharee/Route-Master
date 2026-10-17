@@ -36,8 +36,7 @@ const STEP_ORDER = [
   "backfill",
   "optimizing",
   "directions",
-  "saving",
-  "complete",
+  "preview",
 ];
 
 function ProgressIndicator({
@@ -57,7 +56,7 @@ function ProgressIndicator({
       className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4"
     >
       <div className="flex items-center gap-2 mb-3">
-        {progress.step === "complete" ? (
+        {progress.step === "preview" ? (
           <CheckCircle2 className="w-4 h-4 text-green-600" />
         ) : (
           <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
@@ -120,10 +119,16 @@ function openNavigation(address: string) {
   }
 }
 
+function formatAppointmentWindow(start: string, latestStart?: string | null) {
+  const earliest = start.slice(0, 5)
+  return latestStart ? `Start between ${earliest} and ${latestStart.slice(0, 5)}` : `Starts at ${earliest}`
+}
+
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
   const { data: route } = useRouteByDate(selectedDate);
+  const routeIsLocked = route?.status === "in_progress" || route?.status === "completed";
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
   const sendSMS = useSendSMS();
@@ -231,6 +236,14 @@ export default function RoutesPage() {
 
   const geometry = route?.optimization_result?.geometry ?? [];
 
+  const proposalStops = optimizeRoute.proposal?.stops ?? [];
+  const proposalIsComplete = !!optimizeRoute.proposal && optimizeRoute.proposal.skippedJobIds.length === 0;
+  const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
+    ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
+    : null;
+  const proposalDriveTimeChangeMinutes = optimizeRoute.proposal?.currentDriveDurationSeconds !== null && optimizeRoute.proposal?.currentDriveDurationSeconds !== undefined
+    ? (optimizeRoute.proposal.currentDriveDurationSeconds - optimizeRoute.proposal.driveDurationSeconds) / 60
+    : null;
   const formatDuration = (mins: number) => {
     const h = Math.floor(mins / 60);
     const m = Math.round(mins % 60);
@@ -297,13 +310,14 @@ export default function RoutesPage() {
                     <StartLocationInput
                       value={startLocation}
                       onChange={handleStartLocationChange}
-                      disabled={optimizeRoute.isPending || sendSMS.isPending}
+                      disabled={routeIsLocked || optimizeRoute.isPending || sendSMS.isPending}
                     />
                   </div>
                   <Button
                     onClick={handleOptimize}
                     disabled={
                       !startLocation.trim() ||
+                      routeIsLocked ||
                       optimizeRoute.isPending ||
                       sendSMS.isPending
                     }
@@ -322,9 +336,91 @@ export default function RoutesPage() {
                   </Button>
                 </div>
 
+                {routeIsLocked && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+                    {route?.status === "completed"
+                      ? "This workday is complete. Its saved route is locked."
+                      : "This workday has started. Its saved route is locked while you work."}
+                  </p>
+                )}
+
                 <AnimatePresence>
                   <ProgressIndicator progress={optimizeRoute.progress} />
                 </AnimatePresence>
+
+                {optimizeRoute.proposal && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4" aria-live="polite">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">Review your proposed day</h3>
+                        <p className="text-sm text-gray-600">
+                          {optimizeRoute.proposal.orderedJobIds.length} of {optimizeRoute.proposal.totalJobCount} stops schedulable · {(
+                            optimizeRoute.proposal.distanceMeters / 1000
+                          ).toFixed(1)} km · {formatDuration(optimizeRoute.proposal.driveDurationSeconds / 60)} driving · {formatDuration(optimizeRoute.proposal.serviceDurationMinutes)} on-site
+                        </p>
+                        {proposalIsComplete && proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
+                          <p className="mt-1 text-sm font-medium text-blue-800">
+                            Compared with the current stop order: {Math.abs(proposalDistanceChangeKm).toFixed(1)} km {proposalDistanceChangeKm >= 0 ? "shorter" : "longer"} and {formatDuration(Math.abs(proposalDriveTimeChangeMinutes))} {proposalDriveTimeChangeMinutes >= 0 ? "less" : "more"} estimated driving.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {optimizeRoute.proposal.orderedJobIds.length === 1 && (
+                      <p className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm text-gray-700">
+                        This day has one stop, so there is no stop order to improve. The estimate shows the trip from your start location to that client.
+                      </p>
+                    )}
+
+                    <ol className="mt-3 max-h-64 space-y-2 overflow-y-auto" aria-label="Proposed stop order">
+                      {proposalStops.map((stop, index) => {
+                        const job = jobs?.find((item) => item.id === stop.jobId);
+                        return (
+                          <li key={stop.jobId} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700">{index + 1}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium text-gray-900">{job?.title ?? "Scheduled job"} — {job?.client?.full_name ?? "Client"}</span>
+                              <span className="text-gray-500">{stop.scheduledTime ? formatAppointmentWindow(stop.scheduledTime, stop.latestStartTime) : "Time not set"} · {stop.estimatedDurationMinutes ?? 0} min service</span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+
+                    {optimizeRoute.proposal.unlocatedJobIds.length > 0 && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                        {optimizeRoute.proposal.unlocatedJobIds.length} job(s) have addresses that could not be located. Correct the addresses, then optimize again.
+                      </p>
+                    )}
+                    {optimizeRoute.proposal.infeasibleJobIds.length > 0 && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                        {optimizeRoute.proposal.infeasibleJobIds.length} job(s) could not fit their appointment times from this start location. Check the appointment times and start location, then optimize again.
+                      </p>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                      <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
+                      <Button onClick={optimizeRoute.apply} disabled={!proposalIsComplete || routeIsLocked || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : routeIsLocked ? "Workday route is locked" : proposalIsComplete ? "Apply this route" : "Resolve stops before applying"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {optimizeRoute.appliedProposal?.date === selectedDate && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-green-200 bg-green-50 p-4 sm:flex-row sm:items-center sm:justify-between" role="status" aria-live="polite">
+                    <div className="flex items-start gap-3">
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-700" />
+                      <div>
+                        <h3 className="font-semibold text-green-900">Route applied and saved</h3>
+                        <p className="text-sm text-green-800">
+                          {optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
+                        </p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={optimizeRoute.dismissApplied}>Dismiss</Button>
+                  </div>
+                )}
 
                 {route && !optimizeRoute.isPending && (
                   <Button
@@ -408,7 +504,8 @@ export default function RoutesPage() {
                 <Button
                   size="sm"
                   onClick={() => startDay.mutate(selectedDate)}
-                  disabled={startDay.isPending}
+                  disabled={startDay.isPending || !!optimizeRoute.proposal}
+                  title={optimizeRoute.proposal ? "Apply or discard the route proposal before starting the day." : undefined}
                 >
                   {startDay.isPending ? (
                     <>
@@ -498,7 +595,9 @@ export default function RoutesPage() {
                     {/* Actions */}
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <Badge variant="outline" className="text-xs">
-                        {job.scheduled_time.slice(0, 5)}
+                        {job.latest_start_time
+                          ? `${job.scheduled_time.slice(0, 5)}–${job.latest_start_time.slice(0, 5)}`
+                          : job.scheduled_time.slice(0, 5)}
                       </Badge>
 
                       {!isCompleted && !isCancelled && (

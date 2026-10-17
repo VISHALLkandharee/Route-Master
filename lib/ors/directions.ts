@@ -1,4 +1,4 @@
-const ORS_BASE_URL = 'https://api.openrouteservice.org'
+const ORS_BASE_URL = 'https://api.heigit.org/openrouteservice'
 
 export interface DirectionsResult {
   distanceMeters: number

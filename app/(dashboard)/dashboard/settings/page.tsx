@@ -61,6 +61,11 @@ const profileSchema = z.object({
     "other",
   ]),
   timezone: z.string().min(1, "Please select a timezone"),
+  workday_start: z.string().min(1, "Choose when your workday starts"),
+  workday_end: z.string().min(1, "Choose when your workday ends"),
+}).refine((data) => data.workday_end > data.workday_start, {
+  message: "Workday end must be after workday start",
+  path: ["workday_end"],
 });
 
 type ProfileFormData = z.infer<typeof profileSchema>;
@@ -199,6 +204,8 @@ function SettingsPageContent() {
       business_name: "",
       business_type: "other",
       timezone: "UTC",
+      workday_start: "08:00",
+      workday_end: "17:00",
     },
   });
 
@@ -210,6 +217,8 @@ function SettingsPageContent() {
         business_name: profile.business_name ?? "",
         business_type: profile.business_type ?? "other",
         timezone: profile.timezone ?? "UTC",
+        workday_start: profile.workday_start?.slice(0, 5) ?? "08:00",
+        workday_end: profile.workday_end?.slice(0, 5) ?? "17:00",
       });
     }
   }, [profile, reset]);
@@ -399,7 +408,7 @@ function SettingsPageContent() {
               <SectionHeading
                 icon={<Briefcase className="w-4 h-4" />}
                 title="Business Information"
-                description="Your business name, type, and timezone"
+                description="Business details, timezone, and daily working hours"
               />
 
               {isLoading ? (
@@ -483,6 +492,26 @@ function SettingsPageContent() {
                       )}
                     />
                   </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="workday_start">Workday starts</Label>
+                    <Input id="workday_start" type="time" {...register("workday_start")} />
+                    {errors.workday_start && (
+                      <p className="text-xs text-red-500">{errors.workday_start.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="workday_end">Workday ends</Label>
+                    <Input id="workday_end" type="time" {...register("workday_end")} />
+                    {errors.workday_end && (
+                      <p className="text-xs text-red-500">{errors.workday_end.message}</p>
+                    )}
+                  </div>
+
+                  <p className="-mt-2 text-xs text-gray-500">
+                    Route plans will fit these hours in your selected timezone.
+                  </p>
 
                   <Button
                     type="submit"

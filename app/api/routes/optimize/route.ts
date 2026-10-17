@@ -6,6 +6,7 @@ import { getDirections } from '@/lib/ors/directions'
 import { rateLimit } from '@/lib/rate-limit'
 import { getSubscriptionAccess } from '@/lib/subscription-access'
 import { isDateOnly } from '@/lib/validation'
+import { zonedTimeToUnixSeconds } from '@/lib/time/zoned-time'
 
 
 interface JobRow {
@@ -14,6 +15,42 @@ interface JobRow {
   address: string
   latitude: number | null
   longitude: number | null
+  scheduled_time: string
+  latest_start_time: string | null
+  estimated_duration: number
+  order_index: number
+}
+
+async function readBoundedJson(request: NextRequest, maxBytes: number) {
+  if (!request.body) return { ok: false as const, tooLarge: false }
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > maxBytes) {
+        await reader.cancel()
+        return { ok: false as const, tooLarge: true }
+      }
+      chunks.push(value)
+    }
+
+    const bytes = new Uint8Array(totalBytes)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return { ok: true as const, value: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
+  } catch {
+    return { ok: false as const, tooLarge: false }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -30,8 +67,10 @@ export async function POST(request: NextRequest) {
       try {
         const supabase = await createClient()
 
-        const contentLength = Number(request.headers.get('content-length') ?? 0)
-        if (contentLength > 8192) {
+        const maxBodyBytes = 8192
+        const contentLengthHeader = request.headers.get('content-length')
+        const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader)
+        if (contentLength !== null && (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > maxBodyBytes)) {
           send({ step: 'error', message: 'Request is too large.' })
           controller.close()
           return
@@ -46,6 +85,17 @@ export async function POST(request: NextRequest) {
           return
         }
         const userId = userData.user.id
+
+        const { data: profile, error: profileError } = await supabase
+          .from('users')
+          .select('timezone, workday_start, workday_end')
+          .eq('id', userId)
+          .maybeSingle()
+        if (profileError || !profile?.timezone || !profile.workday_start || !profile.workday_end) {
+          send({ step: 'error', message: 'Your timezone or workday hours are unavailable. Update them in Settings, then try again.' })
+          controller.close()
+          return
+        }
 
         const access = await getSubscriptionAccess(supabase, userId)
         if (access.status !== 'allowed') {
@@ -79,14 +129,18 @@ export async function POST(request: NextRequest) {
           return
         }
 
-        let body: unknown
-        try {
-          body = await request.json()
-        } catch {
+        const parsedBody = await readBoundedJson(request, maxBodyBytes)
+        if (parsedBody.tooLarge) {
+          send({ step: 'error', message: 'Request is too large.' })
+          controller.close()
+          return
+        }
+        if (!parsedBody.ok || typeof parsedBody.value !== 'object' || parsedBody.value === null || Array.isArray(parsedBody.value)) {
           send({ step: 'error', message: 'Request was invalid. Please refresh and try again.' })
           controller.close()
           return
         }
+        const body = parsedBody.value
         const date =
           typeof body === 'object' && body !== null && 'date' in body
             ? (body as { date?: unknown }).date
@@ -107,6 +161,27 @@ export async function POST(request: NextRequest) {
         }
         if (start_location !== null && (typeof start_location !== 'string' || start_location.length > 300)) {
           send({ step: 'error', message: 'Start location is invalid. Please check it and try again.' })
+          controller.close()
+          return
+        }
+
+        const { data: savedDay, error: savedDayError } = await supabase
+          .from('routes')
+          .select('status')
+          .eq('scheduled_date', date)
+          .maybeSingle()
+        if (savedDayError) {
+          send({ step: 'error', message: 'Could not verify whether this workday is editable. Please try again.' })
+          controller.close()
+          return
+        }
+        if (savedDay?.status === 'in_progress' || savedDay?.status === 'completed') {
+          send({
+            step: 'error',
+            message: savedDay.status === 'completed'
+              ? 'This workday is complete, so its saved route is locked.'
+              : 'This workday has started, so its saved route is locked while you work.',
+          })
           controller.close()
           return
         }
@@ -194,7 +269,7 @@ export async function POST(request: NextRequest) {
 
         const { data: jobs, error: jobsError } = await supabase
           .from('jobs')
-          .select('id, client_id, address, latitude, longitude')
+          .select('id, client_id, address, latitude, longitude, scheduled_time, latest_start_time, estimated_duration, order_index')
           .eq('scheduled_date', date)
           .in('status', ['pending', 'in_progress'])
           .is('deleted_at', null)
@@ -210,6 +285,41 @@ export async function POST(request: NextRequest) {
           controller.close()
           return
         }
+        if (jobs.length > 50) {
+          send({ step: 'error', message: 'The routing service supports up to 50 stops per route. Split this work across multiple days, then optimize again.' })
+          controller.close()
+          return
+        }
+
+        const vehicleStart = zonedTimeToUnixSeconds(date, profile.workday_start, profile.timezone)
+        const vehicleEnd = zonedTimeToUnixSeconds(date, profile.workday_end, profile.timezone)
+        if (vehicleStart === null || vehicleEnd === null) {
+          send({ step: 'error', message: 'Could not interpret this workday in your account timezone. Check Settings and try again.' })
+          controller.close()
+          return
+        }
+
+        if (profile.workday_end <= profile.workday_start) {
+          send({ step: 'error', message: 'Your workday end must be later than its start. Update your hours in Settings.' })
+          controller.close()
+          return
+        }
+
+        const appointmentWindows = new Map<string, [number, number]>()
+        for (const job of jobs as JobRow[]) {
+          const earliestStart = zonedTimeToUnixSeconds(date, job.scheduled_time, profile.timezone)
+          const latestStart = zonedTimeToUnixSeconds(
+            date,
+            job.latest_start_time ?? job.scheduled_time,
+            profile.timezone,
+          )
+          if (earliestStart === null || latestStart === null || latestStart < earliestStart) {
+            send({ step: 'error', message: 'A job has an invalid or unavailable appointment time. Correct its schedule, then optimize again.' })
+            controller.close()
+            return
+          }
+          appointmentWindows.set(job.id, [earliestStart, latestStart])
+        }
 
         // ── Step 3: Backfill missing coordinates ─────────────────
         send({
@@ -222,14 +332,24 @@ export async function POST(request: NextRequest) {
           id: string
           latitude: number
           longitude: number
+          scheduledTime: string
+          estimatedDurationMinutes: number
+          orderIndex: number
+          timeWindow: [number, number]
+          latestStartTime: string | null
         }[] = []
 
         for (const job of jobs as JobRow[]) {
-          if (job.latitude && job.longitude) {
+          if (typeof job.latitude === 'number' && typeof job.longitude === 'number') {
             routableJobs.push({
               id: job.id,
               latitude: job.latitude,
               longitude: job.longitude,
+              scheduledTime: job.scheduled_time,
+              estimatedDurationMinutes: job.estimated_duration,
+              orderIndex: job.order_index,
+              timeWindow: appointmentWindows.get(job.id)!,
+              latestStartTime: job.latest_start_time,
             })
             continue
           }
@@ -261,6 +381,11 @@ export async function POST(request: NextRequest) {
             id: job.id,
             latitude: geocoded.latitude,
             longitude: geocoded.longitude,
+            scheduledTime: job.scheduled_time,
+            estimatedDurationMinutes: job.estimated_duration,
+            orderIndex: job.order_index,
+            timeWindow: appointmentWindows.get(job.id)!,
+            latestStartTime: job.latest_start_time,
           })
         }
 
@@ -281,7 +406,14 @@ export async function POST(request: NextRequest) {
 
         const optimizeResult = await optimizeRoute(
           { latitude: startLatitude!, longitude: startLongitude! },
-          routableJobs
+          routableJobs.map((job) => ({
+            id: job.id,
+            latitude: job.latitude,
+            longitude: job.longitude,
+            estimatedDurationMinutes: job.estimatedDurationMinutes,
+            timeWindow: job.timeWindow,
+          })),
+          [vehicleStart, vehicleEnd]
         )
 
         if (!optimizeResult) {
@@ -293,6 +425,19 @@ export async function POST(request: NextRequest) {
           controller.close()
           return
         }
+
+        if (optimizeResult.orderedJobIds.length === 0) {
+          send({
+            step: 'error',
+            message: 'No route can meet these appointment times from the selected start location. Adjust the schedule or start location and try again.',
+          })
+          controller.close()
+          return
+        }
+
+        const skippedWithNoRoute = [
+          ...new Set([...skippedJobIds, ...optimizeResult.unassignedJobIds]),
+        ]
 
         // ── Step 5: Driving directions ───────────────────────────
         send({
@@ -310,70 +455,79 @@ export async function POST(request: NextRequest) {
 
         const directions = await getDirections(orderedCoords)
 
-        // ── Step 6: Save ─────────────────────────────────────────
-        send({ step: 'saving', message: 'Saving your optimized route...' })
-
-        await Promise.all(
-          optimizeResult.orderedJobIds.map((jobId, index) =>
-            supabase
-              .from('jobs')
-              .update({ order_index: index })
-              .eq('id', jobId)
-          )
-        )
-
-        const { data: existing } = await supabase
+        const { data: currentRoute } = await supabase
           .from('routes')
-          .select('id')
+          .select('optimization_result')
           .eq('scheduled_date', date)
           .maybeSingle()
+        const routableById = new Map(routableJobs.map((job) => [job.id, job]))
+        const priorOrderedIds = Array.isArray(currentRoute?.optimization_result?.orderedJobIds)
+          ? currentRoute.optimization_result.orderedJobIds.filter(
+              (id: unknown): id is string => typeof id === 'string' && routableById.has(id)
+            )
+          : []
+        const baselineIds = [
+          ...priorOrderedIds,
+          ...[...routableJobs]
+            .sort((a, b) => a.orderIndex - b.orderIndex || a.scheduledTime.localeCompare(b.scheduledTime))
+            .map((job) => job.id)
+            .filter((id) => !priorOrderedIds.includes(id)),
+        ]
+        const baselineDirections = await getDirections([
+          [startLongitude!, startLatitude!],
+          ...baselineIds.flatMap((jobId) => {
+            const job = routableById.get(jobId)
+            return job ? [[job.longitude, job.latitude] as [number, number]] : []
+          }),
+        ])
 
-        const { data: savedRoute, error: upsertError } = await supabase
-          .from('routes')
-          .upsert(
-            {
-              user_id: userId,
-              scheduled_date: date,
-              status: 'optimized',
-              total_distance_km: Math.round(
-                ((directions
-                  ? directions.distanceMeters
-                  : optimizeResult.distanceMeters) /
-                  1000) *
-                  10
-              ) / 10,
-              total_duration_mins: Math.round(
-                (directions
-                  ? directions.durationSeconds
-                  : optimizeResult.durationSeconds) / 60
-              ),
-              start_location: startLocationText,
-              start_latitude: startLatitude,
-              start_longitude: startLongitude,
-              optimization_result: {
-                orderedJobIds: optimizeResult.orderedJobIds,
-                geometry: directions?.geometry ?? [],
-              },
-              is_recalculated: !!existing,
-              recalculated_at: existing ? new Date().toISOString() : null,
-            },
-            { onConflict: 'user_id,scheduled_date' }
-          )
-          .select()
-          .single()
-
-        if (upsertError) {
-          console.error('Route upsert error:', JSON.stringify(upsertError))
-          send({ step: 'error', message: 'Failed to save the optimized route.' })
-          controller.close()
-          return
-        }
-
-        // ── Complete ─────────────────────────────────────────────
+        // Optimization is a proposal only. Saving is deferred until the user
+        // reviews and confirms the stop order in the dashboard.
         send({
-          step: 'complete',
-          route: savedRoute,
-          skippedJobIds,
+          step: 'preview',
+          proposal: {
+            date,
+            timezone: profile.timezone,
+            workdayStart: profile.workday_start,
+            workdayEnd: profile.workday_end,
+            startLocation: startLocationText,
+            startLatitude,
+            startLongitude,
+            orderedJobIds: optimizeResult.orderedJobIds,
+            skippedJobIds: skippedWithNoRoute,
+            unlocatedJobIds: skippedJobIds,
+            infeasibleJobIds: optimizeResult.unassignedJobIds,
+            totalJobCount: jobs.length,
+            appointmentSnapshot: (jobs as JobRow[]).map((job) => {
+              const routableJob = routableById.get(job.id)
+              return {
+                jobId: job.id,
+                latitude: routableJob?.latitude ?? null,
+                longitude: routableJob?.longitude ?? null,
+                scheduledTime: job.scheduled_time,
+                latestStartTime: job.latest_start_time,
+                estimatedDurationMinutes: job.estimated_duration,
+              }
+            }),
+            distanceMeters: directions?.distanceMeters ?? optimizeResult.distanceMeters,
+            driveDurationSeconds: directions?.durationSeconds ?? optimizeResult.durationSeconds,
+            currentDistanceMeters: baselineDirections?.distanceMeters ?? null,
+            currentDriveDurationSeconds: baselineDirections?.durationSeconds ?? null,
+            serviceDurationMinutes: optimizeResult.orderedJobIds.reduce((total, jobId) => {
+              const job = routableById.get(jobId)
+              return total + (job?.estimatedDurationMinutes ?? 0)
+            }, 0),
+            geometry: directions?.geometry ?? [],
+            stops: optimizeResult.stops.map((stop) => {
+              const job = routableJobs.find((candidate) => candidate.id === stop.jobId)
+              return {
+                jobId: stop.jobId,
+                scheduledTime: job?.scheduledTime,
+                latestStartTime: job?.latestStartTime,
+                estimatedDurationMinutes: job?.estimatedDurationMinutes,
+              }
+            }),
+          },
         })
         controller.close()
       } catch (error) {
