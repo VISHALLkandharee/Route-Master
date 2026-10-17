@@ -11,6 +11,7 @@ export interface Job {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
   scheduled_date: string
   scheduled_time: string
+  latest_start_time: string | null
   estimated_duration: number
   order_index: number
   address: string
@@ -35,6 +36,7 @@ export interface JobInput {
   title: string
   scheduled_date: string
   scheduled_time: string
+  latest_start_time?: string | null
   estimated_duration: number
   price?: number
   notes?: string
@@ -96,6 +98,7 @@ export function useCreateJob() {
           title: input.title,
           scheduled_date: input.scheduled_date,
           scheduled_time: input.scheduled_time,
+          latest_start_time: input.latest_start_time || null,
           estimated_duration: input.estimated_duration,
           price: input.price ?? null,
           notes: input.notes || null,
@@ -141,6 +144,7 @@ export function useUpdateJob() {
           title: input.title,
           scheduled_date: input.scheduled_date,
           scheduled_time: input.scheduled_time,
+          latest_start_time: input.latest_start_time || null,
           estimated_duration: input.estimated_duration,
           price: input.price ?? null,
           notes: input.notes || null,

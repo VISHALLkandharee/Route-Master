@@ -68,6 +68,9 @@ export function useLastStartLocation() {
 
 export interface RouteProposal {
   date: string
+  timezone: string
+  workdayStart: string
+  workdayEnd: string
   startLocation: string
   startLatitude: number
   startLongitude: number
@@ -76,13 +79,21 @@ export interface RouteProposal {
   unlocatedJobIds: string[]
   infeasibleJobIds: string[]
   totalJobCount: number
+  appointmentSnapshot: {
+    jobId: string
+    latitude: number | null
+    longitude: number | null
+    scheduledTime: string
+    latestStartTime: string | null
+    estimatedDurationMinutes: number
+  }[]
   distanceMeters: number
   driveDurationSeconds: number
   currentDistanceMeters: number | null
   currentDriveDurationSeconds: number | null
   serviceDurationMinutes: number
   geometry: [number, number][]
-  stops: { jobId: string; scheduledTime?: string; estimatedDurationMinutes?: number }[]
+  stops: { jobId: string; scheduledTime?: string; latestStartTime?: string | null; estimatedDurationMinutes?: number }[]
 }
 
 export interface OptimizeProgress {
@@ -185,6 +196,10 @@ export function useOptimizeRoute() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           date: proposal.date,
+          timezone: proposal.timezone,
+          workdayStart: proposal.workdayStart,
+          workdayEnd: proposal.workdayEnd,
+          appointmentSnapshot: proposal.appointmentSnapshot,
           startLocation: proposal.startLocation,
           startLatitude: proposal.startLatitude,
           startLongitude: proposal.startLongitude,
@@ -271,23 +286,27 @@ export function useStartDay() {
 
   return useMutation({
     mutationFn: async (date: string) => {
-      const { error: userError } = await supabase.auth.getUser()
-      if (userError) throw new Error('Your session expired. Please log in again.')
+      const { data: userData, error: userError } = await supabase.auth.getUser()
+      if (userError || !userData.user) throw new Error('Your session expired. Please log in again.')
 
-      const { error } = await supabase
+      const { data: startedRoute, error } = await supabase
         .from('routes')
         .update({
           status: 'in_progress',
           started_at: new Date().toISOString(),
         })
         .eq('scheduled_date', date)
+        .eq('status', 'optimized')
+        .select('id')
+        .maybeSingle()
 
       if (error) throw error
+      if (!startedRoute) throw new Error('This route is no longer ready to start. Refresh and check the workday status.')
     },
     onSuccess: (_, date) => {
       queryClient.invalidateQueries({ queryKey: routesQueryKey(date) })
       toast.success('Day started! Navigate to your first stop.')
     },
-    onError: () => toast.error('Failed to start day'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to start day'),
   })
 }

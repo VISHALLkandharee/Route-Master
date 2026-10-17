@@ -7,6 +7,10 @@ import { isDateOnly } from '@/lib/validation'
 
 type ConfirmationBody = {
   date?: unknown
+  timezone?: unknown
+  workdayStart?: unknown
+  workdayEnd?: unknown
+  appointmentSnapshot?: unknown
   startLocation?: unknown
   startLatitude?: unknown
   startLongitude?: unknown
@@ -14,26 +18,106 @@ type ConfirmationBody = {
   skippedJobIds?: unknown
 }
 
+type AppointmentSnapshot = {
+  jobId: string
+  latitude: number | null
+  longitude: number | null
+  scheduledTime: string
+  latestStartTime: string | null
+  estimatedDurationMinutes: number
+}
+
+function isTimeValue(value: unknown): value is string {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value)
+}
+
+function isAppointmentSnapshot(value: unknown): value is AppointmentSnapshot {
+  if (typeof value !== 'object' || value === null) return false
+  const snapshot = value as Record<string, unknown>
+  return typeof snapshot.jobId === 'string' && snapshot.jobId.length <= 64 &&
+    (snapshot.latitude === null || validCoordinate(snapshot.latitude, -90, 90)) &&
+    (snapshot.longitude === null || validCoordinate(snapshot.longitude, -180, 180)) &&
+    isTimeValue(snapshot.scheduledTime) &&
+    (snapshot.latestStartTime === null || isTimeValue(snapshot.latestStartTime)) &&
+    typeof snapshot.estimatedDurationMinutes === 'number' &&
+    Number.isInteger(snapshot.estimatedDurationMinutes) && snapshot.estimatedDurationMinutes >= 15
+}
+
+function comparableTime(value: string | null) {
+  return value?.slice(0, 5) ?? null
+}
+
 function validCoordinate(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
 }
 
+async function readBoundedJson(request: NextRequest, maxBytes: number) {
+  if (!request.body) return { ok: false as const, tooLarge: false }
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > maxBytes) {
+        await reader.cancel()
+        return { ok: false as const, tooLarge: true }
+      }
+      chunks.push(value)
+    }
+
+    const bytes = new Uint8Array(totalBytes)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return { ok: true as const, value: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
+  } catch {
+    return { ok: false as const, tooLarge: false }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export async function POST(request: NextRequest) {
+  const maxBodyBytes = 65_536
   const contentLength = Number(request.headers.get('content-length') ?? 0)
-  if (contentLength > 16_384) {
+  if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
     return NextResponse.json({ error: 'Request is too large.' }, { status: 413 })
   }
 
-  let body: ConfirmationBody
-  try {
-    body = await request.json()
-  } catch {
+  const parsedBody = await readBoundedJson(request, maxBodyBytes)
+  if (parsedBody.tooLarge) {
+    return NextResponse.json({ error: 'Request is too large.' }, { status: 413 })
+  }
+  if (!parsedBody.ok || typeof parsedBody.value !== 'object' || parsedBody.value === null) {
     return NextResponse.json({ error: 'Request was invalid.' }, { status: 400 })
   }
+  const body = parsedBody.value as ConfirmationBody
 
-  const { date, startLocation, startLatitude, startLongitude, orderedJobIds, skippedJobIds } = body
+  const {
+    date,
+    timezone,
+    workdayStart,
+    workdayEnd,
+    appointmentSnapshot,
+    startLocation,
+    startLatitude,
+    startLongitude,
+    orderedJobIds,
+    skippedJobIds,
+  } = body
   if (
     !isDateOnly(date) ||
+    typeof timezone !== 'string' || timezone.length > 100 ||
+    !isTimeValue(workdayStart) || !isTimeValue(workdayEnd) || workdayEnd <= workdayStart ||
+    !Array.isArray(appointmentSnapshot) || appointmentSnapshot.length > 50 ||
+    !appointmentSnapshot.every(isAppointmentSnapshot) ||
+    new Set(appointmentSnapshot.map((job) => (job as AppointmentSnapshot).jobId)).size !== appointmentSnapshot.length ||
     typeof startLocation !== 'string' ||
     startLocation.trim().length === 0 ||
     startLocation.length > 300 ||
@@ -41,11 +125,11 @@ export async function POST(request: NextRequest) {
     !validCoordinate(startLongitude, -180, 180) ||
     !Array.isArray(orderedJobIds) ||
     orderedJobIds.length === 0 ||
-    orderedJobIds.length > 200 ||
+    orderedJobIds.length > 50 ||
     orderedJobIds.some((id) => typeof id !== 'string' || id.length > 64) ||
     new Set(orderedJobIds).size !== orderedJobIds.length ||
     !Array.isArray(skippedJobIds) ||
-    skippedJobIds.length > 200 ||
+    skippedJobIds.length > 50 ||
     skippedJobIds.some((id) => typeof id !== 'string' || id.length > 64) ||
     new Set(skippedJobIds).size !== skippedJobIds.length ||
     orderedJobIds.some((id) => skippedJobIds.includes(id))
@@ -71,6 +155,25 @@ export async function POST(request: NextRequest) {
     }
     const userId = userData.user.id
 
+    const { data: profile, error: profileError } = await supabase
+      .from('users')
+      .select('timezone, workday_start, workday_end')
+      .eq('id', userId)
+      .maybeSingle()
+    if (profileError || !profile) {
+      return NextResponse.json({ error: 'Could not verify your workday settings. Please try again.' }, { status: 503 })
+    }
+    if (
+      profile.timezone !== timezone ||
+      comparableTime(profile.workday_start) !== comparableTime(workdayStart as string) ||
+      comparableTime(profile.workday_end) !== comparableTime(workdayEnd as string)
+    ) {
+      return NextResponse.json(
+        { error: 'Your timezone or workday hours changed after this route was planned. Optimize again to review the latest schedule.' },
+        { status: 409 }
+      )
+    }
+
     const access = await getSubscriptionAccess(supabase, userId)
     if (access.status !== 'allowed') {
       return NextResponse.json(
@@ -94,7 +197,7 @@ export async function POST(request: NextRequest) {
 
     const { data: jobs, error: jobsError } = await supabase
       .from('jobs')
-      .select('id, latitude, longitude')
+      .select('id, latitude, longitude, scheduled_time, latest_start_time, estimated_duration')
       .eq('scheduled_date', date)
       .in('status', ['pending', 'in_progress'])
       .is('deleted_at', null)
@@ -105,9 +208,22 @@ export async function POST(request: NextRequest) {
 
     const expectedIds = new Set(jobs.map((job) => job.id))
     const proposalIds = new Set([...orderedJobIds, ...skippedJobIds] as string[])
+    const snapshotById = new Map(
+      (appointmentSnapshot as AppointmentSnapshot[]).map((job) => [job.jobId, job])
+    )
     if (
       expectedIds.size !== proposalIds.size ||
-      [...proposalIds].some((id) => !expectedIds.has(id))
+      [...proposalIds].some((id) => !expectedIds.has(id)) ||
+      snapshotById.size !== expectedIds.size ||
+      jobs.some((job) => {
+        const planned = snapshotById.get(job.id)
+        return !planned ||
+          comparableTime(job.scheduled_time) !== comparableTime(planned.scheduledTime) ||
+          comparableTime(job.latest_start_time) !== comparableTime(planned.latestStartTime) ||
+          job.latitude !== planned.latitude ||
+          job.longitude !== planned.longitude ||
+          job.estimated_duration !== planned.estimatedDurationMinutes
+      })
     ) {
       return NextResponse.json(
         { error: 'Your jobs changed after this route was planned. Optimize again to review the latest stops.' },

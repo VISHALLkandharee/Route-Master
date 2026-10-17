@@ -16,6 +16,8 @@ export interface UserProfile {
   business_type: 'pet_grooming' | 'pool_cleaning' | 'auto_detailing' | 'other' | null
   avatar_url: string | null
   timezone: string
+  workday_start: string
+  workday_end: string
   subscription_status: 'trial' | 'active' | 'past_due' | 'cancelled'
   trial_ends_at: string
   onboarding_completed: boolean
@@ -140,6 +142,8 @@ interface UpdateProfileInput {
   business_name: string
   business_type: 'pet_grooming' | 'pool_cleaning' | 'auto_detailing' | 'other'
   timezone: string
+  workday_start: string
+  workday_end: string
 }
 
 export function useUpdateProfile() {

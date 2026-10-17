@@ -119,10 +119,16 @@ function openNavigation(address: string) {
   }
 }
 
+function formatAppointmentWindow(start: string, latestStart?: string | null) {
+  const earliest = start.slice(0, 5)
+  return latestStart ? `Start between ${earliest} and ${latestStart.slice(0, 5)}` : `Starts at ${earliest}`
+}
+
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
   const { data: route } = useRouteByDate(selectedDate);
+  const routeIsLocked = route?.status === "in_progress" || route?.status === "completed";
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
   const sendSMS = useSendSMS();
@@ -238,11 +244,6 @@ export default function RoutesPage() {
   const proposalDriveTimeChangeMinutes = optimizeRoute.proposal?.currentDriveDurationSeconds !== null && optimizeRoute.proposal?.currentDriveDurationSeconds !== undefined
     ? (optimizeRoute.proposal.currentDriveDurationSeconds - optimizeRoute.proposal.driveDurationSeconds) / 60
     : null;
-  const hasAppointmentOrderConflict = proposalStops.some((stop, index) => {
-    const previousTime = proposalStops[index - 1]?.scheduledTime;
-    return index > 0 && !!previousTime && !!stop.scheduledTime && previousTime > stop.scheduledTime;
-  });
-
   const formatDuration = (mins: number) => {
     const h = Math.floor(mins / 60);
     const m = Math.round(mins % 60);
@@ -309,13 +310,14 @@ export default function RoutesPage() {
                     <StartLocationInput
                       value={startLocation}
                       onChange={handleStartLocationChange}
-                      disabled={optimizeRoute.isPending || sendSMS.isPending}
+                      disabled={routeIsLocked || optimizeRoute.isPending || sendSMS.isPending}
                     />
                   </div>
                   <Button
                     onClick={handleOptimize}
                     disabled={
                       !startLocation.trim() ||
+                      routeIsLocked ||
                       optimizeRoute.isPending ||
                       sendSMS.isPending
                     }
@@ -333,6 +335,14 @@ export default function RoutesPage() {
                     )}
                   </Button>
                 </div>
+
+                {routeIsLocked && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+                    {route?.status === "completed"
+                      ? "This workday is complete. Its saved route is locked."
+                      : "This workday has started. Its saved route is locked while you work."}
+                  </p>
+                )}
 
                 <AnimatePresence>
                   <ProgressIndicator progress={optimizeRoute.progress} />
@@ -362,12 +372,6 @@ export default function RoutesPage() {
                       </p>
                     )}
 
-                    {hasAppointmentOrderConflict && (
-                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
-                        This stop order conflicts with the appointment times currently saved for these jobs. Update the appointment times, then optimize again before applying this route.
-                      </p>
-                    )}
-
                     <ol className="mt-3 max-h-64 space-y-2 overflow-y-auto" aria-label="Proposed stop order">
                       {proposalStops.map((stop, index) => {
                         const job = jobs?.find((item) => item.id === stop.jobId);
@@ -376,7 +380,7 @@ export default function RoutesPage() {
                             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700">{index + 1}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate font-medium text-gray-900">{job?.title ?? "Scheduled job"} — {job?.client?.full_name ?? "Client"}</span>
-                              <span className="text-gray-500">{stop.scheduledTime?.slice(0, 5) ?? "Time not set"} · {stop.estimatedDurationMinutes ?? 0} min service</span>
+                              <span className="text-gray-500">{stop.scheduledTime ? formatAppointmentWindow(stop.scheduledTime, stop.latestStartTime) : "Time not set"} · {stop.estimatedDurationMinutes ?? 0} min service</span>
                             </span>
                           </li>
                         );
@@ -396,8 +400,8 @@ export default function RoutesPage() {
 
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
                       <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
-                      <Button onClick={optimizeRoute.apply} disabled={!proposalIsComplete || hasAppointmentOrderConflict || optimizeRoute.isApplying}>
-                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : proposalIsComplete ? "Apply this route" : "Resolve stops before applying"}
+                      <Button onClick={optimizeRoute.apply} disabled={!proposalIsComplete || routeIsLocked || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : routeIsLocked ? "Workday route is locked" : proposalIsComplete ? "Apply this route" : "Resolve stops before applying"}
                       </Button>
                     </div>
                   </div>
@@ -500,7 +504,8 @@ export default function RoutesPage() {
                 <Button
                   size="sm"
                   onClick={() => startDay.mutate(selectedDate)}
-                  disabled={startDay.isPending}
+                  disabled={startDay.isPending || !!optimizeRoute.proposal}
+                  title={optimizeRoute.proposal ? "Apply or discard the route proposal before starting the day." : undefined}
                 >
                   {startDay.isPending ? (
                     <>
@@ -590,7 +595,9 @@ export default function RoutesPage() {
                     {/* Actions */}
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <Badge variant="outline" className="text-xs">
-                        {job.scheduled_time.slice(0, 5)}
+                        {job.latest_start_time
+                          ? `${job.scheduled_time.slice(0, 5)}–${job.latest_start_time.slice(0, 5)}`
+                          : job.scheduled_time.slice(0, 5)}
                       </Badge>
 
                       {!isCompleted && !isCancelled && (

@@ -75,10 +75,3 @@ export function zonedTimeToUnixSeconds(date: string, time: string, timeZone: str
   // round-trip. Reject them rather than silently moving an appointment.
   return null
 }
-
-export function nextDateOnly(date: string): string | null {
-  const parts = parseLocalParts(date, '12:00')
-  if (!parts) return null
-  const next = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1))
-  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`
-}

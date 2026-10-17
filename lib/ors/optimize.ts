@@ -1,4 +1,4 @@
-const ORS_BASE_URL = 'https://api.openrouteservice.org'
+const VROOM_URL = 'https://api.heigit.org/vroom/v0'
 
 export interface OptimizeJob {
   id: string
@@ -52,7 +52,7 @@ const body = {
   ],
 }
 
-const response = await fetch(`${ORS_BASE_URL}/optimization`, {
+const response = await fetch(VROOM_URL, {
   method: 'POST',
   headers: {
     Authorization: apiKey,
