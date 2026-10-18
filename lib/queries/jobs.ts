@@ -20,9 +20,10 @@ export interface Job {
   notes: string | null
   sms_sent: boolean
   sms_sent_at: string | null
-  ai_message: string | null
+  sms_message: string | null
   price: number | null
   completed_at: string | null
+  visit_started_at: string | null
   created_at: string
   updated_at: string
   client: {
@@ -180,14 +181,16 @@ export function useUpdateJobStatus() {
     mutationFn: async ({
       id,
       status,
+      date,
     }: { id: string; status: Job['status']; date: string }) => {
       const { error: userError } = await supabase.auth.getUser()
       if (userError) throw new Error('Your session expired. Please log in again.')
 
-      const updates: Record<string, unknown> = { status }
-      updates.completed_at = status === 'completed' ? new Date().toISOString() : null
-
-      const { error } = await supabase.from('jobs').update(updates).eq('id', id)
+      const { error } = await supabase.rpc('update_job_status_and_route', {
+        p_job_id: id,
+        p_scheduled_date: date,
+        p_status: status,
+      })
       if (error) {
         console.error('Error updating job status:', error)
         throw error
@@ -205,6 +208,11 @@ export function useUpdateJobStatus() {
                 ...j,
                 status,
                 completed_at: status === 'completed' ? new Date().toISOString() : null,
+                visit_started_at: status === 'in_progress'
+                  ? j.visit_started_at ?? new Date().toISOString()
+                  : status === 'pending' || status === 'cancelled'
+                    ? null
+                    : j.visit_started_at,
               }
             : j
         )
@@ -224,6 +232,7 @@ export function useUpdateJobStatus() {
     },
     onSettled: (_data, _err, vars) => {
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(vars.date) })
+      queryClient.invalidateQueries({ queryKey: ['routes', vars.date] })
     },
   })
 }

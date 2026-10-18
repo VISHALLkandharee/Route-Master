@@ -258,57 +258,39 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data: existing, error: existingError } = await supabase
-      .from('routes')
-      .select('id, status')
-      .eq('scheduled_date', date)
-      .maybeSingle()
+    const { data: savedRoute, error: saveError } = await supabase.rpc('confirm_route_with_stops', {
+      p_scheduled_date: date,
+      p_timezone: timezone as string,
+      p_workday_start: workdayStart as string,
+      p_workday_end: workdayEnd as string,
+      p_appointment_snapshot: appointmentSnapshot,
+      p_ordered_job_ids: orderedJobIds,
+      p_total_distance_km: Math.round((directions.distanceMeters / 1000) * 10) / 10,
+      p_total_duration_mins: Math.round(directions.durationSeconds / 60),
+      p_start_location: startLocation.trim(),
+      p_start_latitude: startLatitude,
+      p_start_longitude: startLongitude,
+      p_optimization_result: { orderedJobIds, geometry: directions.geometry },
+    })
 
-    if (existingError) {
-      return NextResponse.json({ error: 'Could not verify the current route. Please try again.' }, { status: 500 })
-    }
-    if (existing?.status === 'in_progress' || existing?.status === 'completed') {
-      return NextResponse.json(
-        { error: 'This workday has already started or is complete. Its route can no longer be replaced.' },
-        { status: 409 }
-      )
-    }
-
-    const { data: savedRoute, error: upsertError } = await supabase
-      .from('routes')
-      .upsert(
-        {
-          user_id: userId,
-          scheduled_date: date,
-          status: 'optimized',
-          total_distance_km: Math.round((directions.distanceMeters / 1000) * 10) / 10,
-          total_duration_mins: Math.round(directions.durationSeconds / 60),
-          start_location: startLocation.trim(),
-          start_latitude: startLatitude,
-          start_longitude: startLongitude,
-          optimization_result: { orderedJobIds, geometry: directions.geometry },
-          is_recalculated: !!existing,
-          recalculated_at: existing ? new Date().toISOString() : null,
-        },
-        { onConflict: 'user_id,scheduled_date' }
-      )
-      .select()
-      .single()
-
-    if (upsertError || !savedRoute) {
-      console.error('Route confirmation upsert failed:', upsertError)
-      return NextResponse.json({ error: 'Failed to save the reviewed route.' }, { status: 500 })
-    }
-
-    for (const [index, jobId] of orderedJobIds.entries()) {
-      const { error } = await supabase.from('jobs').update({ order_index: index }).eq('id', jobId as string)
-      if (error) {
-        console.error('Route stop ordering update failed:', error)
+    if (saveError || !savedRoute) {
+      if (saveError?.code === '55000') {
         return NextResponse.json(
-          { error: 'The route was saved, but stop order could not be fully updated. Please refresh and retry.' },
-          { status: 500 }
+          { error: 'This workday has already started or is complete. Its route can no longer be replaced.' },
+          { status: 409 }
         )
       }
+      if (saveError?.code === '40001') {
+        return NextResponse.json(
+          { error: 'Your jobs or workday settings changed while saving. Optimize again to review the latest plan.' },
+          { status: 409 }
+        )
+      }
+      if (saveError?.code === '22023') {
+        return NextResponse.json({ error: 'The route proposal is invalid. Please optimize it again.' }, { status: 400 })
+      }
+      console.error('Atomic route confirmation failed:', saveError)
+      return NextResponse.json({ error: 'Failed to save the reviewed route.' }, { status: 500 })
     }
 
     return NextResponse.json({ route: savedRoute })

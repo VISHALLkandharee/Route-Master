@@ -17,6 +17,7 @@ interface JobWithClient {
   id: string
   title: string
   scheduled_time: string
+  latest_start_time: string | null
   estimated_duration: number
   sms_sent: boolean
   order_index: number
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
   // ── Load jobs in optimized order ────────────────────────────
   const { data: jobs, error: jobsError } = await supabase
     .from('jobs')
-    .select('id, title, scheduled_time, estimated_duration, sms_sent, order_index, client:clients(id, full_name, phone, preferred_contact)')
+    .select('id, title, scheduled_time, latest_start_time, estimated_duration, sms_sent, order_index, client:clients(id, full_name, phone, preferred_contact)')
     .eq('scheduled_date', date)
     .in('status', ['pending', 'in_progress'])
     .is('deleted_at', null)
@@ -130,7 +131,6 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const totalStops = jobs.length
   const results = {
     submitted: 0,
     skipped: 0,
@@ -167,14 +167,13 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Generate AI message
+      // Use the client's saved appointment window; this path needs no AI API.
       const message = await generateSMSMessage({
         clientName: client.full_name,
         businessName,
         jobTitle: job.title,
         scheduledTime: job.scheduled_time,
-        stopNumber: i + 1,
-        totalStops,
+        latestStartTime: job.latest_start_time,
       })
 
       // Send (mock in development, real Twilio in production)
@@ -196,7 +195,7 @@ export async function POST(request: NextRequest) {
         .update({
           sms_sent: true,
           sms_sent_at: new Date().toISOString(),
-          ai_message: message,
+          sms_message: message,
         })
         .eq('id', job.id)
 
