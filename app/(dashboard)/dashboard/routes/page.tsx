@@ -29,6 +29,11 @@ import { MessageSquare } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { StartLocationInput } from "@/components/dashboard/routes/start-location-input";
 import { PageTransition } from "@/components/dashboard/page-transition";
+import { getVisitDurationMinutes } from "@/lib/time/visit-duration";
+import {
+  buildGoogleMapsDirectionsUrl,
+  getGoogleMapsWaypointLimit,
+} from "@/lib/maps/google-maps-directions";
 
 const STEP_ORDER = [
   "geocoding",
@@ -96,28 +101,6 @@ const RouteMap = dynamic(
 //   const url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`
 //   window.open(url, '_blank')
 // }
-
-function openNavigation(address: string) {
-  const encoded = encodeURIComponent(address);
-  const ua = navigator.userAgent;
-
-  const isIOS = /iPad|iPhone|iPod/.test(ua);
-  const isAndroid = /Android/.test(ua);
-
-  if (isIOS) {
-    // Opens Apple Maps app directly on iPhone/iPad
-    window.location.href = `maps://maps.apple.com/?daddr=${encoded}&dirflg=d`;
-  } else if (isAndroid) {
-    // Opens Google Maps app directly on Android
-    window.location.href = `https://maps.google.com/maps?daddr=${encoded}&dirflg=d`;
-  } else {
-    // Desktop — opens Google Maps in new tab
-    window.open(
-      `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`,
-      "_blank",
-    );
-  }
-}
 
 function formatAppointmentWindow(start: string, latestStart?: string | null) {
   const earliest = start.slice(0, 5)
@@ -234,9 +217,52 @@ export default function RoutesPage() {
         }
       : null;
 
+  const navigationJobs = sortedJobs.filter((job) => job.status !== "cancelled");
+  const mapLocationForJob = (job: (typeof sortedJobs)[number]) => ({
+    address: job.address,
+    latitude: job.latitude,
+    longitude: job.longitude,
+  });
+  const navigateToStop = (jobId: string) => {
+    const targetIndex = navigationJobs.findIndex((job) => job.id === jobId);
+    if (targetIndex < 0) return;
+
+    const previousJobs = navigationJobs.slice(0, targetIndex);
+    let lastCompletedIndex = -1;
+    previousJobs.forEach((job, index) => {
+      if (job.status === "completed") lastCompletedIndex = index;
+    });
+    const routeSegmentJobs = navigationJobs
+      .slice(lastCompletedIndex + 1, targetIndex + 1)
+      .filter((job) => job.status !== "completed");
+    const segmentStart = lastCompletedIndex >= 0
+      ? mapLocationForJob(previousJobs[lastCompletedIndex])
+      : {
+          address: route?.start_location ?? startLocation,
+          latitude: route?.start_latitude,
+          longitude: route?.start_longitude,
+        };
+    const url = buildGoogleMapsDirectionsUrl({
+      start: segmentStart,
+      stops: routeSegmentJobs.map(mapLocationForJob),
+      targetIndex: routeSegmentJobs.length - 1,
+      maxWaypoints: getGoogleMapsWaypointLimit(navigator.userAgent),
+    });
+
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const geometry = route?.optimization_result?.geometry ?? [];
 
   const proposalStops = optimizeRoute.proposal?.stops ?? [];
+  const completedVisits = (jobs ?? []).filter((job) => job.status === "completed");
+  const measuredVisits = completedVisits.flatMap((job) => {
+    const actualMinutes = getVisitDurationMinutes(job.visit_started_at, job.completed_at);
+    return actualMinutes === null ? [] : [{ actualMinutes, plannedMinutes: job.estimated_duration }];
+  });
+  const measuredActualMinutes = measuredVisits.reduce((total, visit) => total + visit.actualMinutes, 0);
+  const measuredPlannedMinutes = measuredVisits.reduce((total, visit) => total + visit.plannedMinutes, 0);
+  const serviceTimeDifference = measuredPlannedMinutes - measuredActualMinutes;
   const proposalIsComplete = !!optimizeRoute.proposal && optimizeRoute.proposal.skippedJobIds.length === 0;
   const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
     ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
@@ -605,27 +631,43 @@ export default function RoutesPage() {
                           size="sm"
                           variant="outline"
                           className="border-blue-200 text-blue-700 hover:bg-blue-50"
-                          onClick={() => openNavigation(job.address)}
+                          onClick={() => navigateToStop(job.id)}
+                          title="Open directions from the route start or last completed stop, following the saved order"
                         >
                           <Navigation className="w-3.5 h-3.5 mr-1" />
                           Navigate
                         </Button>
                       )}
 
-                      {isCurrent && (
+                      {isCurrent && job.status === "pending" && (
                         <Button
                           size="sm"
-                          className="bg-green-600 hover:bg-green-700"
+                          className="bg-blue-600 hover:bg-blue-700"
                           onClick={() => {
                             updateStatus.mutate({
                               id: job.id,
-                              status: "completed",
+                              status: "in_progress",
                               date: job.scheduled_date,
                             });
                           }}
                         >
+                          <Clock className="w-3.5 h-3.5 mr-1" />
+                          Start visit
+                        </Button>
+                      )}
+
+                      {isCurrent && job.status === "in_progress" && (
+                        <Button
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700"
+                          onClick={() => updateStatus.mutate({
+                            id: job.id,
+                            status: "completed",
+                            date: job.scheduled_date,
+                          })}
+                        >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                          Done
+                          Complete visit
                         </Button>
                       )}
                     </div>
@@ -633,6 +675,21 @@ export default function RoutesPage() {
                 </motion.div>
               );
             })}
+
+            {measuredVisits.length > 0 && (
+              <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4" role="status" aria-live="polite">
+                <p className="font-semibold text-blue-950">Measured on-site time</p>
+                <p className="mt-1 text-sm text-blue-900">
+                  {formatDuration(measuredActualMinutes)} actual across {measuredVisits.length} visit{measuredVisits.length === 1 ? "" : "s"}, compared with {formatDuration(measuredPlannedMinutes)} planned
+                  {serviceTimeDifference === 0
+                    ? "."
+                    : ` (${formatDuration(Math.abs(serviceTimeDifference))} ${serviceTimeDifference > 0 ? "under" : "over"} estimate).`}
+                </p>
+                <p className="mt-1 text-xs text-blue-800">
+                  Tracked for {measuredVisits.length} of {completedVisits.length} completed visits. This measures on-site time only; it excludes driving and waiting.
+                </p>
+              </div>
+            )}
 
             {/* All done */}
             {sortedJobs.every(

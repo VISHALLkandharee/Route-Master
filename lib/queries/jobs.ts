@@ -20,9 +20,10 @@ export interface Job {
   notes: string | null
   sms_sent: boolean
   sms_sent_at: string | null
-  ai_message: string | null
+  sms_message: string | null
   price: number | null
   completed_at: string | null
+  visit_started_at: string | null
   created_at: string
   updated_at: string
   client: {
@@ -207,6 +208,11 @@ export function useUpdateJobStatus() {
                 ...j,
                 status,
                 completed_at: status === 'completed' ? new Date().toISOString() : null,
+                visit_started_at: status === 'in_progress'
+                  ? j.visit_started_at ?? new Date().toISOString()
+                  : status === 'pending' || status === 'cancelled'
+                    ? null
+                    : j.visit_started_at,
               }
             : j
         )

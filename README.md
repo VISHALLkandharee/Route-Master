@@ -24,8 +24,8 @@ Route optimization, client arrival updates, and supply tracking for mobile servi
 | Styling | Tailwind CSS + shadcn/ui |
 | Animations | Framer Motion |
 | Maps | Leaflet.js |
-| Routing API | OpenRouteService |
-| AI Messages | Anthropic Claude |
+| Routing API | HeiGIT openrouteservice |
+| Client Messages | Appointment-aware SMS templates; Twilio delivery when configured |
 | Payments | Stripe |
 | State | Zustand + TanStack Query |
 | Forms | React Hook Form + Zod |
@@ -92,8 +92,7 @@ Open `http://localhost:3000`.
 | `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard → Developers → Webhooks |
 | `NEXT_PUBLIC_STRIPE_MONTHLY_PRICE_ID` | Stripe Dashboard → Product catalog |
 | `NEXT_PUBLIC_STRIPE_YEARLY_PRICE_ID` | Stripe Dashboard → Product catalog |
-| `OPENROUTESERVICE_API_KEY` | openrouteservice.org → Account → API Key |
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys |
+| `OPENROUTESERVICE_API_KEY` | HeiGIT account → API keys |
 | `NEXT_PUBLIC_APP_URL` | Your deployment URL (or `http://localhost:3000` locally) |
 
 ## Database Schema

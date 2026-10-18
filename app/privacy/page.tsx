@@ -52,8 +52,8 @@ export default function PrivacyPage() {
               geocoding of addresses
             </li>
             <li>
-              <strong>Anthropic</strong> — generating client notification
-              message text
+              <strong>Twilio</strong> — delivery of client SMS messages when
+              messaging is configured
             </li>
           </ul>
         </section>

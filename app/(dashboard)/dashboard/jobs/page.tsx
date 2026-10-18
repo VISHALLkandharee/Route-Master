@@ -268,8 +268,34 @@ export default function JobsPage() {
                       <Pencil className="w-4 h-4 mr-2" />
                       Edit
                     </DropdownMenuItem>
-                    {job.status === "pending" ||
-                    job.status === "in_progress" ? (
+                    {job.status === "pending" ? (
+                      <>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            updateStatus.mutate({
+                              id: job.id,
+                              status: "in_progress",
+                              date: job.scheduled_date,
+                            })
+                          }
+                        >
+                          <Clock className="w-4 h-4 mr-2 text-blue-600" />
+                          Start Visit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            updateStatus.mutate({
+                              id: job.id,
+                              status: "cancelled",
+                              date: job.scheduled_date,
+                            })
+                          }
+                        >
+                          <XCircle className="w-4 h-4 mr-2 text-gray-500" />
+                          Cancel Job
+                        </DropdownMenuItem>
+                      </>
+                    ) : job.status === "in_progress" ? (
                       <>
                         <DropdownMenuItem
                           onClick={() =>
