@@ -95,13 +95,6 @@ const RouteMap = dynamic(
   },
 );
 
-// function openNavigation(address: string) {
-//   const encoded = encodeURIComponent(address)
-//   // Opens in Google Maps on Android, Apple Maps on iOS, Google Maps in browser
-//   const url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`
-//   window.open(url, '_blank')
-// }
-
 function formatAppointmentWindow(start: string, latestStart?: string | null) {
   const earliest = start.slice(0, 5)
   return latestStart ? `Start between ${earliest} and ${latestStart.slice(0, 5)}` : `Starts at ${earliest}`
@@ -249,7 +242,8 @@ export default function RoutesPage() {
       maxWaypoints: getGoogleMapsWaypointLimit(navigator.userAgent),
     });
 
-    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    // Keep the route in this tab's history so Back returns to Routemaster.
+    if (url) window.location.assign(url);
   };
 
   const geometry = route?.optimization_result?.geometry ?? [];
