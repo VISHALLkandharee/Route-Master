@@ -17,6 +17,7 @@ export interface RouteRecord {
   start_longitude: number | null
   optimization_result: {
     orderedJobIds?: string[]
+    unassignedJobIds?: string[]
     geometry?: [number, number][]
   }
   is_recalculated: boolean
@@ -213,7 +214,11 @@ export function useOptimizeRoute() {
       queryClient.invalidateQueries({ queryKey: routesQueryKey(proposal.date) })
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(proposal.date) })
       setAppliedProposal(proposal)
-      toast.success('Reviewed route saved.')
+      if (proposal.skippedJobIds.length > 0) {
+        toast.warning(`Route saved for ${proposal.orderedJobIds.length} stops. ${proposal.skippedJobIds.length} job(s) still need scheduling.`)
+      } else {
+        toast.success('Reviewed route saved.')
+      }
       setProposal(null)
       setProgress(null)
     } catch (err) {

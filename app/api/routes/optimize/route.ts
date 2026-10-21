@@ -461,14 +461,16 @@ export async function POST(request: NextRequest) {
           .eq('scheduled_date', date)
           .maybeSingle()
         const routableById = new Map(routableJobs.map((job) => [job.id, job]))
-        const priorOrderedIds = Array.isArray(currentRoute?.optimization_result?.orderedJobIds)
+        const priorOrderedIds: string[] = Array.isArray(currentRoute?.optimization_result?.orderedJobIds)
           ? currentRoute.optimization_result.orderedJobIds.filter(
               (id: unknown): id is string => typeof id === 'string' && routableById.has(id)
             )
           : []
+        const selectedJobIds = new Set<string>(optimizeResult.orderedJobIds)
         const baselineIds = [
-          ...priorOrderedIds,
+          ...priorOrderedIds.filter((id) => selectedJobIds.has(id)),
           ...[...routableJobs]
+            .filter((job) => selectedJobIds.has(job.id))
             .sort((a, b) => a.orderIndex - b.orderIndex || a.scheduledTime.localeCompare(b.scheduledTime))
             .map((job) => job.id)
             .filter((id) => !priorOrderedIds.includes(id)),

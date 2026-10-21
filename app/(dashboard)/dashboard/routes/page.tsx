@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { format, addDays, subDays, parseISO } from "date-fns";
 import dynamic from "next/dynamic";
 import {
@@ -184,12 +185,16 @@ export default function RoutesPage() {
   };
 
   const orderedJobIds = route?.optimization_result?.orderedJobIds ?? [];
+  const hasSavedRouteStops = !!route && orderedJobIds.length > 0;
   const sortedJobs =
-    orderedJobIds.length > 0
+    hasSavedRouteStops
       ? orderedJobIds
           .map((id) => jobs?.find((j) => j.id === id))
           .filter((j): j is NonNullable<typeof j> => !!j)
       : routableJobs;
+  const unscheduledJobs = hasSavedRouteStops
+    ? routableJobs.filter((job) => !orderedJobIds.includes(job.id))
+    : [];
 
   const mapStops = sortedJobs
     .filter((j) => j.latitude && j.longitude)
@@ -257,7 +262,7 @@ export default function RoutesPage() {
   const measuredActualMinutes = measuredVisits.reduce((total, visit) => total + visit.actualMinutes, 0);
   const measuredPlannedMinutes = measuredVisits.reduce((total, visit) => total + visit.plannedMinutes, 0);
   const serviceTimeDifference = measuredPlannedMinutes - measuredActualMinutes;
-  const proposalIsComplete = !!optimizeRoute.proposal && optimizeRoute.proposal.skippedJobIds.length === 0;
+  const proposalCanApply = !!optimizeRoute.proposal && optimizeRoute.proposal.orderedJobIds.length > 0;
   const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
     ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
     : null;
@@ -268,6 +273,30 @@ export default function RoutesPage() {
     const h = Math.floor(mins / 60);
     const m = Math.round(mins % 60);
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+  const getExcludedJobReason = (jobId: string) => {
+    const proposal = optimizeRoute.proposal;
+    const job = jobs?.find((item) => item.id === jobId);
+    if (!proposal || !job) return "Review this job's address and appointment details.";
+    if (proposal.unlocatedJobIds.includes(jobId)) {
+      return "Its address could not be located. Update the address, then optimize again.";
+    }
+
+    const minutes = (time: string) => {
+      const [hours, mins] = time.slice(0, 5).split(":").map(Number);
+      return hours * 60 + mins;
+    };
+    const workdayStart = minutes(proposal.workdayStart);
+    const workdayEnd = minutes(proposal.workdayEnd);
+    const earliestStart = minutes(job.scheduled_time);
+    const latestStart = minutes(job.latest_start_time ?? job.scheduled_time);
+    const earliestPossible = Math.max(earliestStart, workdayStart);
+    const latestPossible = Math.min(latestStart, workdayEnd - job.estimated_duration);
+
+    if (earliestPossible > latestPossible) {
+      return `It does not fit your ${proposal.workdayStart.slice(0, 5)}–${proposal.workdayEnd.slice(0, 5)} work hours. Adjust the appointment time or work hours, then optimize again.`;
+    }
+    return "Travel time and other appointment commitments leave no feasible arrival slot. Review this time window or your start location, then optimize again.";
   };
 
   return (
@@ -378,7 +407,7 @@ export default function RoutesPage() {
                             optimizeRoute.proposal.distanceMeters / 1000
                           ).toFixed(1)} km · {formatDuration(optimizeRoute.proposal.driveDurationSeconds / 60)} driving · {formatDuration(optimizeRoute.proposal.serviceDurationMinutes)} on-site
                         </p>
-                        {proposalIsComplete && proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
+                        {proposalDistanceChangeKm !== null && proposalDriveTimeChangeMinutes !== null && (
                           <p className="mt-1 text-sm font-medium text-blue-800">
                             Compared with the current stop order: {Math.abs(proposalDistanceChangeKm).toFixed(1)} km {proposalDistanceChangeKm >= 0 ? "shorter" : "longer"} and {formatDuration(Math.abs(proposalDriveTimeChangeMinutes))} {proposalDriveTimeChangeMinutes >= 0 ? "less" : "more"} estimated driving.
                           </p>
@@ -407,21 +436,29 @@ export default function RoutesPage() {
                       })}
                     </ol>
 
-                    {optimizeRoute.proposal.unlocatedJobIds.length > 0 && (
-                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
-                        {optimizeRoute.proposal.unlocatedJobIds.length} job(s) have addresses that could not be located. Correct the addresses, then optimize again.
-                      </p>
-                    )}
-                    {optimizeRoute.proposal.infeasibleJobIds.length > 0 && (
-                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
-                        {optimizeRoute.proposal.infeasibleJobIds.length} job(s) could not fit their appointment times from this start location. Check the appointment times and start location, then optimize again.
-                      </p>
+                    {optimizeRoute.proposal.skippedJobIds.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
+                        <p className="font-semibold">{optimizeRoute.proposal.skippedJobIds.length} job(s) will remain unscheduled</p>
+                        <ul className="mt-2 space-y-2">
+                          {optimizeRoute.proposal.skippedJobIds.map((jobId) => {
+                            const job = jobs?.find((item) => item.id === jobId);
+                            return (
+                              <li key={jobId}>
+                                <span className="font-medium">{job?.title ?? "Scheduled job"} — {job?.client?.full_name ?? "Client"}:</span>{" "}
+                                {getExcludedJobReason(jobId)}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        <p className="mt-2">You can apply the stops that fit. These jobs stay visible below the saved route and are never removed.</p>
+                        <Link href="/dashboard/jobs" className="mt-2 inline-block font-medium text-amber-900 underline underline-offset-2">Review jobs</Link>
+                      </div>
                     )}
 
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
                       <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
-                      <Button onClick={optimizeRoute.apply} disabled={!proposalIsComplete || routeIsLocked || optimizeRoute.isApplying}>
-                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : routeIsLocked ? "Workday route is locked" : proposalIsComplete ? "Apply this route" : "Resolve stops before applying"}
+                      <Button onClick={optimizeRoute.apply} disabled={!proposalCanApply || routeIsLocked || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : routeIsLocked ? "Workday route is locked" : optimizeRoute.proposal.skippedJobIds.length > 0 ? `Apply route for ${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"}` : "Apply this route"}
                       </Button>
                     </div>
                   </div>
@@ -435,6 +472,7 @@ export default function RoutesPage() {
                         <h3 className="font-semibold text-green-900">Route applied and saved</h3>
                         <p className="text-sm text-green-800">
                           {optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
+                          {optimizeRoute.appliedProposal.skippedJobIds.length > 0 ? ` ${optimizeRoute.appliedProposal.skippedJobIds.length} other job(s) remain unscheduled and visible below.` : ""}
                         </p>
                       </div>
                     </div>
@@ -533,7 +571,7 @@ export default function RoutesPage() {
                       Starting...
                     </>
                   ) : (
-                    "Start Day"
+                    unscheduledJobs.length > 0 ? "Start partial day" : "Start Day"
                   )}
                 </Button>
               )}
@@ -670,6 +708,29 @@ export default function RoutesPage() {
               );
             })}
 
+            {unscheduledJobs.length > 0 && (
+              <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4" aria-labelledby="unscheduled-heading">
+                <h3 id="unscheduled-heading" className="font-semibold text-amber-950">
+                  Needs scheduling ({unscheduledJobs.length})
+                </h3>
+                <p className="mt-1 text-sm text-amber-900">
+                  These jobs are still on this date, but are not part of the saved route. They remain in Routemaster and will not be included in navigation.
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {unscheduledJobs.map((job) => (
+                    <li key={job.id} className="rounded-lg bg-white/80 px-3 py-2">
+                      <p className="font-medium text-gray-900">{job.title} — {job.client?.full_name ?? "Client"}</p>
+                      <p className="text-sm text-gray-600">{job.scheduled_time.slice(0, 5)} · {job.estimated_duration} min · {job.address}</p>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-sm text-amber-950">
+                  Adjust these jobs’ appointment times or move them to another date in Jobs, then optimize again. Starting this partial day locks the saved route order; excluded jobs remain separate from navigation and need to be rescheduled or completed.
+                </p>
+                <Link href="/dashboard/jobs" className="mt-2 inline-block text-sm font-medium text-amber-950 underline underline-offset-2">Review jobs</Link>
+              </section>
+            )}
+
             {measuredVisits.length > 0 && (
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4" role="status" aria-live="polite">
                 <p className="font-semibold text-blue-950">Measured on-site time</p>
@@ -685,7 +746,7 @@ export default function RoutesPage() {
               </div>
             )}
 
-            {/* All done */}
+            {/* Route workday completion */}
             {sortedJobs.every(
               (j) => j.status === "completed" || j.status === "cancelled",
             ) &&
@@ -693,15 +754,20 @@ export default function RoutesPage() {
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-green-50 border border-green-200 rounded-xl p-6 text-center"
+                  className={`${unscheduledJobs.length > 0 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"} border rounded-xl p-6 text-center`}
                 >
-                  <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto mb-2" />
-                  <p className="font-semibold text-green-800">
-                    All jobs complete!
-                  </p>
-                  <p className="text-sm text-green-600 mt-1">
-                    Great work today. See you tomorrow.
-                  </p>
+                  {unscheduledJobs.length > 0 ? (
+                    <>
+                      <p className="font-semibold text-amber-900">All routed stops are complete; this workday still has unscheduled jobs.</p>
+                      <p className="text-sm text-amber-800 mt-1">The saved route is complete. These jobs still need to be rescheduled or completed in Jobs.</p>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto mb-2" />
+                      <p className="font-semibold text-green-800">All jobs complete!</p>
+                      <p className="text-sm text-green-600 mt-1">Great work today. See you tomorrow.</p>
+                    </>
+                  )}
                 </motion.div>
               )}
           </div>
