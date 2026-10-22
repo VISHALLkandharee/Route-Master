@@ -160,8 +160,10 @@ export function useUpdateJob() {
       }
       return data
     },
-    onSuccess: (data: Job) => {
-      queryClient.invalidateQueries({ queryKey: jobsQueryKey(data.scheduled_date) })
+    onSuccess: () => {
+      // A job can move between dates. Invalidate every cached date so the old
+      // day no longer shows it and the new day includes it without a reload.
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
       toast.success('Job updated successfully')
     },
     onError: (err: Error) => {

@@ -105,7 +105,6 @@ export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
   const { data: route } = useRouteByDate(selectedDate);
-  const routeIsLocked = route?.status === "in_progress" || route?.status === "completed";
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
   const sendSMS = useSendSMS();
@@ -156,6 +155,12 @@ export default function RoutesPage() {
   const routableJobs =
     jobs?.filter((j) => j.status === "pending" || j.status === "in_progress") ??
     [];
+  const orderedJobIds = route?.optimization_result?.orderedJobIds ?? [];
+  const canPlanRemainingJobs = route?.status === "completed" &&
+    routableJobs.length > 0 &&
+    routableJobs.every((job) => !orderedJobIds.includes(job.id));
+  const routeIsLocked = route?.status === "in_progress" ||
+    (route?.status === "completed" && !canPlanRemainingJobs);
 
   const handleOptimize = () => {
     if (!startLocation.trim()) return;
@@ -184,7 +189,6 @@ export default function RoutesPage() {
     });
   };
 
-  const orderedJobIds = route?.optimization_result?.orderedJobIds ?? [];
   const hasSavedRouteStops = !!route && orderedJobIds.length > 0;
   const sortedJobs =
     hasSavedRouteStops
@@ -196,7 +200,13 @@ export default function RoutesPage() {
     ? routableJobs.filter((job) => !orderedJobIds.includes(job.id))
     : [];
 
-  const mapStops = sortedJobs
+  const routePreviewJobIds = optimizeRoute.proposal?.date === selectedDate
+    ? optimizeRoute.proposal.orderedJobIds
+    : sortedJobs.map((job) => job.id);
+  const routePreviewJobs = routePreviewJobIds
+    .map((jobId) => jobs?.find((job) => job.id === jobId))
+    .filter((job): job is NonNullable<typeof job> => !!job);
+  const mapStops = routePreviewJobs
     .filter((j) => j.latitude && j.longitude)
     .map((j, index) => ({
       id: j.id,
@@ -206,8 +216,13 @@ export default function RoutesPage() {
       order: index + 1,
     }));
 
-  const mapStart =
-    route?.start_latitude && route?.start_longitude
+  const mapStart = optimizeRoute.proposal?.date === selectedDate
+    ? {
+        latitude: optimizeRoute.proposal.startLatitude,
+        longitude: optimizeRoute.proposal.startLongitude,
+        label: optimizeRoute.proposal.startLocation,
+      }
+    : route?.start_latitude && route?.start_longitude
       ? {
           latitude: route.start_latitude,
           longitude: route.start_longitude,
@@ -251,7 +266,9 @@ export default function RoutesPage() {
     if (url) window.location.assign(url);
   };
 
-  const geometry = route?.optimization_result?.geometry ?? [];
+  const geometry = optimizeRoute.proposal?.date === selectedDate
+    ? optimizeRoute.proposal.geometry
+    : route?.optimization_result?.geometry ?? [];
 
   const proposalStops = optimizeRoute.proposal?.stops ?? [];
   const completedVisits = (jobs ?? []).filter((job) => job.status === "completed");
@@ -282,21 +299,7 @@ export default function RoutesPage() {
       return "Its address could not be located. Update the address, then optimize again.";
     }
 
-    const minutes = (time: string) => {
-      const [hours, mins] = time.slice(0, 5).split(":").map(Number);
-      return hours * 60 + mins;
-    };
-    const workdayStart = minutes(proposal.workdayStart);
-    const workdayEnd = minutes(proposal.workdayEnd);
-    const earliestStart = minutes(job.scheduled_time);
-    const latestStart = minutes(job.latest_start_time ?? job.scheduled_time);
-    const earliestPossible = Math.max(earliestStart, workdayStart);
-    const latestPossible = Math.min(latestStart, workdayEnd - job.estimated_duration);
-
-    if (earliestPossible > latestPossible) {
-      return `It does not fit your ${proposal.workdayStart.slice(0, 5)}–${proposal.workdayEnd.slice(0, 5)} work hours. Adjust the appointment time or work hours, then optimize again.`;
-    }
-    return "Travel time and other appointment commitments leave no feasible arrival slot. Review this time window or your start location, then optimize again.";
+    return "The road-routing service could not build a driving path to this stop. Check its address and location, then try again.";
   };
 
   return (
@@ -392,6 +395,16 @@ export default function RoutesPage() {
                       : "This workday has started. Its saved route is locked while you work."}
                   </p>
                 )}
+                {canPlanRemainingJobs && (
+                  <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status">
+                    The earlier route is complete. Plan the {routableJobs.length} remaining active {routableJobs.length === 1 ? "stop" : "stops"} as a follow-up route.
+                  </p>
+                )}
+                {(route?.optimization_result?.appointmentConflictJobIds?.length ?? 0) > 0 && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
+                    This saved road route includes {route?.optimization_result?.appointmentConflictJobIds?.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
+                  </p>
+                )}
 
                 <AnimatePresence>
                   <ProgressIndicator progress={optimizeRoute.progress} />
@@ -403,7 +416,7 @@ export default function RoutesPage() {
                       <div>
                         <h3 className="font-semibold text-gray-900">Review your proposed day</h3>
                         <p className="text-sm text-gray-600">
-                          {optimizeRoute.proposal.orderedJobIds.length} of {optimizeRoute.proposal.totalJobCount} stops schedulable · {(
+                          {optimizeRoute.proposal.orderedJobIds.length} of {optimizeRoute.proposal.totalJobCount} stops included in the road route · {(
                             optimizeRoute.proposal.distanceMeters / 1000
                           ).toFixed(1)} km · {formatDuration(optimizeRoute.proposal.driveDurationSeconds / 60)} driving · {formatDuration(optimizeRoute.proposal.serviceDurationMinutes)} on-site
                         </p>
@@ -419,6 +432,19 @@ export default function RoutesPage() {
                       <p className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm text-gray-700">
                         This day has one stop, so there is no stop order to improve. The estimate shows the trip from your start location to that client.
                       </p>
+                    )}
+
+                    {optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
+                        <p className="font-semibold">The road route includes these stops, but {optimizeRoute.proposal.appointmentConflictJobIds.length} appointment time(s) may have passed or conflict with your work hours.</p>
+                        <p className="mt-1">Review the order, then confirm timing with the affected clients. Routemaster keeps the stops in the route instead of dropping them.</p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5">
+                          {optimizeRoute.proposal.appointmentConflictJobIds.map((jobId) => {
+                            const job = jobs?.find((item) => item.id === jobId);
+                            return <li key={jobId}>{job?.title ?? "Scheduled job"} — {job?.client?.full_name ?? "Client"}</li>;
+                          })}
+                        </ul>
+                      </div>
                     )}
 
                     <ol className="mt-3 max-h-64 space-y-2 overflow-y-auto" aria-label="Proposed stop order">
@@ -450,7 +476,7 @@ export default function RoutesPage() {
                             );
                           })}
                         </ul>
-                        <p className="mt-2">You can apply the stops that fit. These jobs stay visible below the saved route and are never removed.</p>
+                        <p className="mt-2">These jobs remain in Routemaster. Resolve their locations before adding them to a driving route.</p>
                         <Link href="/dashboard/jobs" className="mt-2 inline-block font-medium text-amber-900 underline underline-offset-2">Review jobs</Link>
                       </div>
                     )}
@@ -473,6 +499,7 @@ export default function RoutesPage() {
                         <p className="text-sm text-green-800">
                           {optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
                           {optimizeRoute.appliedProposal.skippedJobIds.length > 0 ? ` ${optimizeRoute.appliedProposal.skippedJobIds.length} other job(s) remain unscheduled and visible below.` : ""}
+                          {optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
                         </p>
                       </div>
                     </div>
@@ -725,7 +752,7 @@ export default function RoutesPage() {
                   ))}
                 </ul>
                 <p className="mt-3 text-sm text-amber-950">
-                  Adjust these jobs’ appointment times or move them to another date in Jobs, then optimize again. Starting this partial day locks the saved route order; excluded jobs remain separate from navigation and need to be rescheduled or completed.
+                  These stops stay active and are not lost. Check their address or coordinates, then optimize again. Appointment-time conflicts are shown as warnings and do not remove a stop from a road route.
                 </p>
                 <Link href="/dashboard/jobs" className="mt-2 inline-block text-sm font-medium text-amber-950 underline underline-offset-2">Review jobs</Link>
               </section>

@@ -17,6 +17,7 @@ export interface RouteRecord {
   start_longitude: number | null
   optimization_result: {
     orderedJobIds?: string[]
+    appointmentConflictJobIds?: string[]
     unassignedJobIds?: string[]
     geometry?: [number, number][]
   }
@@ -79,6 +80,7 @@ export interface RouteProposal {
   skippedJobIds: string[]
   unlocatedJobIds: string[]
   infeasibleJobIds: string[]
+  appointmentConflictJobIds: string[]
   totalJobCount: number
   appointmentSnapshot: {
     jobId: string
@@ -206,6 +208,7 @@ export function useOptimizeRoute() {
           startLongitude: proposal.startLongitude,
           orderedJobIds: proposal.orderedJobIds,
           skippedJobIds: proposal.skippedJobIds,
+          appointmentConflictJobIds: proposal.appointmentConflictJobIds,
         }),
       })
       const data = await response.json()
@@ -215,7 +218,9 @@ export function useOptimizeRoute() {
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(proposal.date) })
       setAppliedProposal(proposal)
       if (proposal.skippedJobIds.length > 0) {
-        toast.warning(`Route saved for ${proposal.orderedJobIds.length} stops. ${proposal.skippedJobIds.length} job(s) still need scheduling.`)
+        toast.warning(`Road route saved for ${proposal.orderedJobIds.length} stops. ${proposal.skippedJobIds.length} job(s) still need a usable location.`)
+      } else if (proposal.appointmentConflictJobIds.length > 0) {
+        toast.warning(`Road route saved for ${proposal.orderedJobIds.length} stops. Review ${proposal.appointmentConflictJobIds.length} appointment-time warning(s).`)
       } else {
         toast.success('Reviewed route saved.')
       }

@@ -16,6 +16,7 @@ type ConfirmationBody = {
   startLongitude?: unknown
   orderedJobIds?: unknown
   skippedJobIds?: unknown
+  appointmentConflictJobIds?: unknown
 }
 
 type AppointmentSnapshot = {
@@ -110,7 +111,9 @@ export async function POST(request: NextRequest) {
     startLongitude,
     orderedJobIds,
     skippedJobIds,
+    appointmentConflictJobIds,
   } = body
+  const conflictIds = appointmentConflictJobIds === undefined ? [] : appointmentConflictJobIds
   if (
     !isDateOnly(date) ||
     typeof timezone !== 'string' || timezone.length > 100 ||
@@ -132,6 +135,10 @@ export async function POST(request: NextRequest) {
     skippedJobIds.length > 50 ||
     skippedJobIds.some((id) => typeof id !== 'string' || id.length > 64) ||
     new Set(skippedJobIds).size !== skippedJobIds.length ||
+    !Array.isArray(conflictIds) ||
+    conflictIds.length > 50 ||
+    conflictIds.some((id: unknown) => typeof id !== 'string' || id.length > 64) ||
+    new Set(conflictIds).size !== conflictIds.length ||
     orderedJobIds.some((id) => skippedJobIds.includes(id))
   ) {
     return NextResponse.json({ error: 'The route proposal is invalid. Please optimize it again.' }, { status: 400 })
@@ -202,12 +209,14 @@ export async function POST(request: NextRequest) {
 
     const expectedIds = new Set(jobs.map((job) => job.id))
     const proposalIds = new Set([...orderedJobIds, ...skippedJobIds] as string[])
+    const timingConflictIds = conflictIds as string[]
     const snapshotById = new Map(
       (appointmentSnapshot as AppointmentSnapshot[]).map((job) => [job.jobId, job])
     )
     if (
       expectedIds.size !== proposalIds.size ||
       [...proposalIds].some((id) => !expectedIds.has(id)) ||
+      timingConflictIds.some((id) => !expectedIds.has(id) || !orderedJobIds.includes(id)) ||
       snapshotById.size !== expectedIds.size ||
       jobs.some((job) => {
         const planned = snapshotById.get(job.id)
@@ -264,13 +273,17 @@ export async function POST(request: NextRequest) {
       p_start_location: startLocation.trim(),
       p_start_latitude: startLatitude,
       p_start_longitude: startLongitude,
-      p_optimization_result: { orderedJobIds, geometry: directions.geometry },
+      p_optimization_result: {
+        orderedJobIds,
+        appointmentConflictJobIds: timingConflictIds,
+        geometry: directions.geometry,
+      },
     })
 
     if (saveError || !savedRoute) {
       if (saveError?.code === '55000') {
         return NextResponse.json(
-          { error: 'This workday has already started or is complete. Its route can no longer be replaced.' },
+          { error: 'This route is in progress or still has an active stop from the completed route, so it cannot be replaced.' },
           { status: 409 }
         )
       }
