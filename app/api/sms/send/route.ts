@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
 
   const { data: route, error: routeError } = await supabase
     .from('routes')
-    .select('status')
+    .select('status, optimization_result')
     .eq('scheduled_date', date)
     .maybeSingle()
   if (routeError) {
@@ -96,6 +96,20 @@ export async function POST(request: NextRequest) {
       { status: 409 },
     )
   }
+  const orderedJobIds = Array.isArray(route.optimization_result?.orderedJobIds)
+    ? route.optimization_result.orderedJobIds.filter((id: unknown): id is string => typeof id === 'string')
+    : []
+  if (orderedJobIds.length === 0) {
+    return NextResponse.json(
+      { error: 'Build and save a route with at least one stop before sending arrival updates.' },
+      { status: 409 },
+    )
+  }
+  const appointmentConflictJobIds = new Set(
+    Array.isArray(route.optimization_result?.appointmentConflictJobIds)
+      ? route.optimization_result.appointmentConflictJobIds.filter((id: unknown): id is string => typeof id === 'string')
+      : [],
+  )
 
   // ── Business name ───────────────────────────────────────────
   const { data: profile } = await supabase
@@ -131,6 +145,12 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  const routeJobs = (jobs as unknown as JobWithClient[])
+    .filter((job) => orderedJobIds.includes(job.id))
+  if (routeJobs.length === 0) {
+    return NextResponse.json({ error: 'There are no active stops in this saved route to message.' }, { status: 400 })
+  }
+
   const results = {
     submitted: 0,
     skipped: 0,
@@ -138,8 +158,8 @@ export async function POST(request: NextRequest) {
     details: [] as { jobId: string; status: string; reason?: string }[],
   }
 
-  for (let i = 0; i < jobs.length; i++) {
-    const job = jobs[i] as unknown as JobWithClient
+  for (let i = 0; i < routeJobs.length; i++) {
+    const job = routeJobs[i]
     const client = job.client
 
     // Already sent — skip silently
@@ -149,6 +169,18 @@ export async function POST(request: NextRequest) {
         jobId: job.id,
         status: 'skipped',
         reason: 'SMS already sent',
+      })
+      continue
+    }
+
+    // Do not send a stale appointment-time message for jobs whose route was
+    // deliberately planned outside their saved time window.
+    if (appointmentConflictJobIds.has(job.id)) {
+      results.skipped++
+      results.details.push({
+        jobId: job.id,
+        status: 'skipped',
+        reason: 'Appointment timing needs confirmation before messaging',
       })
       continue
     }

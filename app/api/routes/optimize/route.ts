@@ -167,7 +167,7 @@ export async function POST(request: NextRequest) {
 
         const { data: savedDay, error: savedDayError } = await supabase
           .from('routes')
-          .select('status')
+          .select('status, optimization_result')
           .eq('scheduled_date', date)
           .maybeSingle()
         if (savedDayError) {
@@ -175,12 +175,10 @@ export async function POST(request: NextRequest) {
           controller.close()
           return
         }
-        if (savedDay?.status === 'in_progress' || savedDay?.status === 'completed') {
+        if (savedDay?.status === 'in_progress') {
           send({
             step: 'error',
-            message: savedDay.status === 'completed'
-              ? 'This workday is complete, so its saved route is locked.'
-              : 'This workday has started, so its saved route is locked while you work.',
+            message: 'This workday has started, so its saved route is locked while you work.',
           })
           controller.close()
           return
@@ -289,6 +287,20 @@ export async function POST(request: NextRequest) {
           send({ step: 'error', message: 'The routing service supports up to 50 stops per route. Split this work across multiple days, then optimize again.' })
           controller.close()
           return
+        }
+
+        if (savedDay?.status === 'completed') {
+          const completedRouteIds = Array.isArray(savedDay.optimization_result?.orderedJobIds)
+            ? savedDay.optimization_result.orderedJobIds.filter((id: unknown): id is string => typeof id === 'string')
+            : []
+          if (jobs.some((job) => completedRouteIds.includes(job.id))) {
+            send({
+              step: 'error',
+              message: 'This completed route still has an active stop. Reopen that visit from Jobs before planning another route.',
+            })
+            controller.close()
+            return
+          }
         }
 
         const vehicleStart = zonedTimeToUnixSeconds(date, profile.workday_start, profile.timezone)
@@ -404,7 +416,7 @@ export async function POST(request: NextRequest) {
           message: `Calculating the best order for ${routableJobs.length} stops...`,
         })
 
-        const optimizeResult = await optimizeRoute(
+        const constrainedResult = await optimizeRoute(
           { latitude: startLatitude!, longitude: startLongitude! },
           routableJobs.map((job) => ({
             id: job.id,
@@ -416,7 +428,7 @@ export async function POST(request: NextRequest) {
           [vehicleStart, vehicleEnd]
         )
 
-        if (!optimizeResult) {
+        if (!constrainedResult) {
           send({
             step: 'error',
             message:
@@ -426,14 +438,50 @@ export async function POST(request: NextRequest) {
           return
         }
 
+        const nowSeconds = Math.floor(Date.now() / 1000)
+        const overdueJobIds = (jobs as JobRow[])
+          .filter((job) => appointmentWindows.get(job.id)![1] < nowSeconds)
+          .map((job) => job.id)
+        const timingConflictCandidates = new Set([
+          ...constrainedResult.unassignedJobIds,
+          ...overdueJobIds,
+        ])
+        const needsRoadFirstFallback =
+          constrainedResult.unassignedJobIds.length > 0 || overdueJobIds.length > 0
+
+        // Appointment/work-hour windows are useful guidance, but must not
+        // make a real, routable job disappear. If any stop is overdue or the
+        // constrained plan would omit work, ask VROOM for the best road order
+        // without time windows and report the conflicts for user review.
+        const optimizeResult = needsRoadFirstFallback
+          ? await optimizeRoute(
+              { latitude: startLatitude!, longitude: startLongitude! },
+              routableJobs.map((job) => ({
+                id: job.id,
+                latitude: job.latitude,
+                longitude: job.longitude,
+                estimatedDurationMinutes: job.estimatedDurationMinutes,
+              }))
+            )
+          : constrainedResult
+
+        if (!optimizeResult) {
+          send({ step: 'error', message: 'The road-routing service is unavailable right now. Please try again shortly.' })
+          controller.close()
+          return
+        }
+
         if (optimizeResult.orderedJobIds.length === 0) {
           send({
             step: 'error',
-            message: 'No route can meet these appointment times from the selected start location. Adjust the schedule or start location and try again.',
+            message: 'The road-routing service could not build a route to these stops. Check the addresses and try again.',
           })
           controller.close()
           return
         }
+
+        const appointmentConflictJobIds = [...timingConflictCandidates]
+          .filter((jobId) => optimizeResult.orderedJobIds.includes(jobId))
 
         const skippedWithNoRoute = [
           ...new Set([...skippedJobIds, ...optimizeResult.unassignedJobIds]),
@@ -496,6 +544,7 @@ export async function POST(request: NextRequest) {
             startLatitude,
             startLongitude,
             orderedJobIds: optimizeResult.orderedJobIds,
+            appointmentConflictJobIds,
             skippedJobIds: skippedWithNoRoute,
             unlocatedJobIds: skippedJobIds,
             infeasibleJobIds: optimizeResult.unassignedJobIds,

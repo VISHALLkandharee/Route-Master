@@ -5,7 +5,7 @@ export interface OptimizeJob {
   latitude: number
   longitude: number
   estimatedDurationMinutes: number
-  timeWindow: [number, number]
+  timeWindow?: [number, number]
 }
 
 export interface OptimizeResult {
@@ -19,7 +19,7 @@ export interface OptimizeResult {
 export async function optimizeRoute(
   start: { latitude: number; longitude: number },
   jobs: OptimizeJob[],
-  vehicleTimeWindow: [number, number]
+  vehicleTimeWindow?: [number, number]
 ): Promise<OptimizeResult | null> {
   const apiKey = process.env.OPENROUTESERVICE_API_KEY
   if (!apiKey) throw new Error('OPENROUTESERVICE_API_KEY is not set')
@@ -40,14 +40,14 @@ const body = {
     id: index + 1,
     location: [job.longitude, job.latitude],
     service: Math.round(job.estimatedDurationMinutes * 60),
-    time_windows: [job.timeWindow],
+    ...(job.timeWindow ? { time_windows: [job.timeWindow] } : {}),
   })),
   vehicles: [
     {
       id: 1,
       profile: 'driving-car',
       start: [start.longitude, start.latitude],
-      time_window: vehicleTimeWindow,
+      ...(vehicleTimeWindow ? { time_window: vehicleTimeWindow } : {}),
     },
   ],
 }
