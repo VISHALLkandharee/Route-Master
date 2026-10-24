@@ -11,6 +11,7 @@ import { zonedTimeToUnixSeconds } from '@/lib/time/zoned-time'
 
 interface JobRow {
   id: string
+  status: 'pending' | 'in_progress'
   client_id: string
   address: string
   latitude: number | null
@@ -153,9 +154,17 @@ export async function POST(request: NextRequest) {
           typeof body === 'object' && body !== null && 'start_coordinates' in body
             ? (body as { start_coordinates?: unknown }).start_coordinates
             : null
+        const mode = typeof body === 'object' && body !== null && 'mode' in body
+          ? (body as { mode?: unknown }).mode
+          : 'day'
 
         if (!isDateOnly(date)) {
           send({ step: 'error', message: 'A date is required.' })
+          controller.close()
+          return
+        }
+        if (mode !== 'day' && mode !== 'remaining') {
+          send({ step: 'error', message: 'Route planning mode is invalid. Refresh the page and try again.' })
           controller.close()
           return
         }
@@ -167,7 +176,7 @@ export async function POST(request: NextRequest) {
 
         const { data: savedDay, error: savedDayError } = await supabase
           .from('routes')
-          .select('status, optimization_result')
+          .select('id, status, start_location, start_latitude, start_longitude, optimization_result')
           .eq('scheduled_date', date)
           .maybeSingle()
         if (savedDayError) {
@@ -175,11 +184,21 @@ export async function POST(request: NextRequest) {
           controller.close()
           return
         }
-        if (savedDay?.status === 'in_progress') {
+        if (mode === 'day' && savedDay?.status === 'in_progress') {
           send({
             step: 'error',
             message: 'This workday has started, so its saved route is locked while you work.',
           })
+          controller.close()
+          return
+        }
+        if (mode === 'remaining' && savedDay?.status !== 'in_progress') {
+          send({ step: 'error', message: 'Replanning is available only while this workday is in progress. Refresh the page and try again.' })
+          controller.close()
+          return
+        }
+        if (mode === 'remaining' && (typeof start_location !== 'string' || !start_location.trim())) {
+          send({ step: 'error', message: 'Enter or detect your current location to replan the remaining stops.' })
           controller.close()
           return
         }
@@ -267,7 +286,7 @@ export async function POST(request: NextRequest) {
 
         const { data: jobs, error: jobsError } = await supabase
           .from('jobs')
-          .select('id, client_id, address, latitude, longitude, scheduled_time, latest_start_time, estimated_duration, order_index')
+          .select('id, status, client_id, address, latitude, longitude, scheduled_time, latest_start_time, estimated_duration, order_index')
           .eq('scheduled_date', date)
           .in('status', ['pending', 'in_progress'])
           .is('deleted_at', null)
@@ -285,6 +304,25 @@ export async function POST(request: NextRequest) {
         }
         if (jobs.length > 50) {
           send({ step: 'error', message: 'The routing service supports up to 50 stops per route. Split this work across multiple days, then optimize again.' })
+          controller.close()
+          return
+        }
+
+        const savedOrderedIds: string[] = Array.isArray(savedDay?.optimization_result?.orderedJobIds)
+          ? savedDay.optimization_result.orderedJobIds.filter((id: unknown): id is string => typeof id === 'string')
+          : []
+        const currentStops = (jobs as JobRow[]).filter((job) => job.status === 'in_progress')
+        if (mode === 'remaining' && (currentStops.length > 1 || (currentStops.length === 1 && !savedOrderedIds.includes(currentStops[0].id)))) {
+          send({ step: 'error', message: 'The active visit could not be matched to this saved route. Complete or correct the active visit in Jobs before replanning.' })
+          controller.close()
+          return
+        }
+        const currentStopJobId = mode === 'remaining' ? currentStops[0]?.id ?? null : null
+        const jobsToOptimize = mode === 'remaining'
+          ? (jobs as JobRow[]).filter((job) => job.status === 'pending')
+          : jobs as JobRow[]
+        if (jobsToOptimize.length === 0) {
+          send({ step: 'error', message: 'There are no pending stops left to replan. Finish the active visit or add another job first.' })
           controller.close()
           return
         }
@@ -318,7 +356,7 @@ export async function POST(request: NextRequest) {
         }
 
         const appointmentWindows = new Map<string, [number, number]>()
-        for (const job of jobs as JobRow[]) {
+        for (const job of jobsToOptimize) {
           const earliestStart = zonedTimeToUnixSeconds(date, job.scheduled_time, profile.timezone)
           const latestStart = zonedTimeToUnixSeconds(
             date,
@@ -336,7 +374,7 @@ export async function POST(request: NextRequest) {
         // ── Step 3: Backfill missing coordinates ─────────────────
         send({
           step: 'backfill',
-          message: `Finding coordinates for ${jobs.length} job${jobs.length > 1 ? 's' : ''}...`,
+          message: `Finding coordinates for ${jobsToOptimize.length} job${jobsToOptimize.length > 1 ? 's' : ''}...`,
         })
 
         const skippedJobIds: string[] = []
@@ -439,14 +477,14 @@ export async function POST(request: NextRequest) {
         }
 
         const nowSeconds = Math.floor(Date.now() / 1000)
-        const overdueJobIds = (jobs as JobRow[])
+        const overdueJobIds = jobsToOptimize
           .filter((job) => appointmentWindows.get(job.id)![1] < nowSeconds)
           .map((job) => job.id)
         // A timing conflict is actionable when it affects the sequence of a
         // multi-stop day. A single stop has no ordering decision to warn about;
         // it should still be routed even when its appointment window is past.
         const timingConflictCandidates = new Set(
-          jobs.length > 1
+          routableJobs.length > 1
             ? [...constrainedResult.unassignedJobIds, ...overdueJobIds]
             : [],
         )
@@ -552,8 +590,11 @@ export async function POST(request: NextRequest) {
             skippedJobIds: skippedWithNoRoute,
             unlocatedJobIds: skippedJobIds,
             infeasibleJobIds: optimizeResult.unassignedJobIds,
-            totalJobCount: jobs.length,
-            appointmentSnapshot: (jobs as JobRow[]).map((job) => {
+            mode,
+            currentStopJobId,
+            expectedOrderedJobIds: mode === 'remaining' ? savedOrderedIds : undefined,
+            totalJobCount: jobsToOptimize.length,
+            appointmentSnapshot: jobsToOptimize.map((job) => {
               const routableJob = routableById.get(job.id)
               return {
                 jobId: job.id,

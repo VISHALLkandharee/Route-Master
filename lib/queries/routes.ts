@@ -20,6 +20,14 @@ export interface RouteRecord {
     appointmentConflictJobIds?: string[]
     unassignedJobIds?: string[]
     geometry?: [number, number][]
+    activeSegment?: {
+      startLocation: string
+      latitude: number
+      longitude: number
+      orderedJobIds: string[]
+      currentStopJobId: string | null
+      replannedAt: string
+    }
   }
   is_recalculated: boolean
 }
@@ -69,6 +77,8 @@ export function useLastStartLocation() {
 // ─── Optimize ─────────────────────────────────────────────────
 
 export interface RouteProposal {
+  mode: 'day' | 'remaining'
+  expectedOrderedJobIds?: string[]
   date: string
   timezone: string
   workdayStart: string
@@ -97,6 +107,7 @@ export interface RouteProposal {
   serviceDurationMinutes: number
   geometry: [number, number][]
   stops: { jobId: string; scheduledTime?: string; latestStartTime?: string | null; estimatedDurationMinutes?: number }[]
+  currentStopJobId?: string | null
 }
 
 export interface OptimizeProgress {
@@ -118,10 +129,12 @@ export function useOptimizeRoute() {
       date,
       startLocation,
       startCoordinates,
+      mode = 'day',
     }: {
       date: string;
       startLocation: string;
       startCoordinates?: { latitude: number; longitude: number } | null;
+      mode?: 'day' | 'remaining';
     }
   ) => {
     setIsPending(true)
@@ -138,6 +151,7 @@ export function useOptimizeRoute() {
           date,
           start_location: startLocation,
           start_coordinates: startCoordinates ?? undefined,
+          mode,
         }),
       })
 
@@ -194,7 +208,7 @@ export function useOptimizeRoute() {
     if (!proposal) return
     setIsApplying(true)
     try {
-      const response = await fetch('/api/routes/confirm', {
+      const response = await fetch(proposal.mode === 'remaining' ? '/api/routes/replan' : '/api/routes/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,6 +223,8 @@ export function useOptimizeRoute() {
           orderedJobIds: proposal.orderedJobIds,
           skippedJobIds: proposal.skippedJobIds,
           appointmentConflictJobIds: proposal.appointmentConflictJobIds,
+          currentStopJobId: proposal.currentStopJobId ?? null,
+          expectedOrderedJobIds: proposal.expectedOrderedJobIds ?? [],
         }),
       })
       const data = await response.json()
