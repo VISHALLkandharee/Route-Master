@@ -400,7 +400,7 @@ export default function RoutesPage() {
                     The earlier route is complete. Plan the {routableJobs.length} remaining active {routableJobs.length === 1 ? "stop" : "stops"} as a follow-up route.
                   </p>
                 )}
-                {(route?.optimization_result?.appointmentConflictJobIds?.length ?? 0) > 0 && (
+                {orderedJobIds.length > 1 && (route?.optimization_result?.appointmentConflictJobIds?.length ?? 0) > 0 && (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
                     This saved road route includes {route?.optimization_result?.appointmentConflictJobIds?.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
                   </p>
@@ -427,12 +427,6 @@ export default function RoutesPage() {
                         )}
                       </div>
                     </div>
-
-                    {optimizeRoute.proposal.orderedJobIds.length === 1 && (
-                      <p className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm text-gray-700">
-                        This day has one stop, so there is no stop order to improve. The estimate shows the trip from your start location to that client.
-                      </p>
-                    )}
 
                     {optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
