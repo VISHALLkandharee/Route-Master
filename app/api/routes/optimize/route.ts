@@ -442,10 +442,14 @@ export async function POST(request: NextRequest) {
         const overdueJobIds = (jobs as JobRow[])
           .filter((job) => appointmentWindows.get(job.id)![1] < nowSeconds)
           .map((job) => job.id)
-        const timingConflictCandidates = new Set([
-          ...constrainedResult.unassignedJobIds,
-          ...overdueJobIds,
-        ])
+        // A timing conflict is actionable when it affects the sequence of a
+        // multi-stop day. A single stop has no ordering decision to warn about;
+        // it should still be routed even when its appointment window is past.
+        const timingConflictCandidates = new Set(
+          jobs.length > 1
+            ? [...constrainedResult.unassignedJobIds, ...overdueJobIds]
+            : [],
+        )
         const needsRoadFirstFallback =
           constrainedResult.unassignedJobIds.length > 0 || overdueJobIds.length > 0
 
