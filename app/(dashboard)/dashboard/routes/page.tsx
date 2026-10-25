@@ -528,7 +528,7 @@ export default function RoutesPage() {
                     )}
 
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
-                      <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
+                      <Button variant="outline" onClick={() => optimizeRoute.discard()} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
                       <Button onClick={optimizeRoute.apply} disabled={!proposalCanApply || (routeIsLocked && optimizeRoute.proposal.mode !== "remaining") || optimizeRoute.isApplying}>
                         {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : optimizeRoute.proposal.mode === "remaining" ? `Apply remaining route (${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"})` : routeIsLocked ? "Workday route is locked" : optimizeRoute.proposal.skippedJobIds.length > 0 ? `Apply route for ${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"}` : "Apply this route"}
                       </Button>
@@ -748,7 +748,9 @@ export default function RoutesPage() {
                         <Button
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-700"
+                          disabled={updateStatus.isPending || optimizeRoute.isApplying}
                           onClick={() => {
+                            optimizeRoute.discard("Visit status changed, so the route preview was cleared. Replan to review the latest stops.");
                             updateStatus.mutate({
                               id: job.id,
                               status: "in_progress",
@@ -765,11 +767,15 @@ export default function RoutesPage() {
                         <Button
                           size="sm"
                           className="bg-green-600 hover:bg-green-700"
-                          onClick={() => updateStatus.mutate({
-                            id: job.id,
-                            status: "completed",
-                            date: job.scheduled_date,
-                          })}
+                          disabled={updateStatus.isPending || optimizeRoute.isApplying}
+                          onClick={() => {
+                            optimizeRoute.discard("Visit status changed, so the route preview was cleared. Replan to review the latest stops.");
+                            updateStatus.mutate({
+                              id: job.id,
+                              status: "completed",
+                              date: job.scheduled_date,
+                            });
+                          }}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                           Complete visit
