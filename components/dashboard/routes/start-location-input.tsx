@@ -14,6 +14,9 @@ interface StartLocationInputProps {
     coordinates?: { latitude: number; longitude: number } | null,
   ) => void;
   disabled?: boolean;
+  label?: string;
+  placeholder?: string;
+  hint?: string;
 }
 
 async function reverseGeocodeClient(
@@ -36,6 +39,9 @@ export function StartLocationInput({
   value,
   onChange,
   disabled,
+  label = "Start Location",
+  placeholder = "Your home or shop address",
+  hint = "Or tap the pin icon to use your current location",
 }: StartLocationInputProps) {
   const [detecting, setDetecting] = useState(false);
 
@@ -82,12 +88,12 @@ export function StartLocationInput({
     <div className="space-y-1.5">
       <Label htmlFor="start_location" className="flex items-center gap-1.5">
         <MapPin className="w-3.5 h-3.5" />
-        Start Location
+        {label}
       </Label>
       <div className="flex gap-2">
         <Input
           id="start_location"
-          placeholder="Your home or shop address"
+          placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value, null)}
           disabled={disabled || detecting}
@@ -110,7 +116,7 @@ export function StartLocationInput({
         </Button>
       </div>
       <p className="text-xs text-gray-400">
-        Or tap the pin icon to use your current location
+        {hint}
       </p>
     </div>
   );

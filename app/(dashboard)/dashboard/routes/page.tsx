@@ -112,22 +112,28 @@ export default function RoutesPage() {
   const updateStatus = useUpdateJobStatus();
 
   const [editedLocations, setEditedLocations] = useState<Record<string, string>>({});
+  const [replanningDate, setReplanningDate] = useState<string | null>(null);
   const [detectedStartPoint, setDetectedStartPoint] = useState<{
     date: string;
     label: string;
     latitude: number;
     longitude: number;
   } | null>(null);
-  const startLocation =
+  const savedStartLocation =
     (selectedDate ? editedLocations[selectedDate] : undefined) ??
     (route?.start_location || lastStartLocation || "");
+  const replanningRemaining = replanningDate === selectedDate;
+  const startLocation = replanningRemaining
+    ? (selectedDate ? editedLocations[`remaining:${selectedDate}`] : undefined) ?? ""
+    : savedStartLocation;
 
   const handleStartLocationChange = (
     val: string,
     coordinates?: { latitude: number; longitude: number } | null,
   ) => {
     if (!selectedDate) return;
-    setEditedLocations((prev) => ({ ...prev, [selectedDate]: val }));
+    const key = replanningRemaining ? `remaining:${selectedDate}` : selectedDate;
+    setEditedLocations((prev) => ({ ...prev, [key]: val }));
     setDetectedStartPoint(
       coordinates
         ? { date: selectedDate, label: val, ...coordinates }
@@ -149,12 +155,14 @@ export default function RoutesPage() {
 
   const goToDay = (offset: number) => {
     const newDate = offset > 0 ? addDays(dateObj, 1) : subDays(dateObj, 1);
+    setReplanningDate(null);
     setSelectedDate(format(newDate, "yyyy-MM-dd"));
   };
 
   const routableJobs =
     jobs?.filter((j) => j.status === "pending" || j.status === "in_progress") ??
     [];
+  const pendingJobs = routableJobs.filter((job) => job.status === "pending");
   const orderedJobIds = route?.optimization_result?.orderedJobIds ?? [];
   const canPlanRemainingJobs = route?.status === "completed" &&
     routableJobs.length > 0 &&
@@ -173,6 +181,7 @@ export default function RoutesPage() {
           }
         : null;
     const savedCoordinates =
+      !replanningRemaining &&
       route?.start_location === startLocation &&
       route.start_latitude !== null &&
       route.start_longitude !== null
@@ -186,6 +195,7 @@ export default function RoutesPage() {
       date: selectedDate,
       startLocation,
       startCoordinates: detectedCoordinates ?? savedCoordinates,
+      mode: replanningRemaining ? "remaining" : "day",
     });
   };
 
@@ -202,7 +212,9 @@ export default function RoutesPage() {
 
   const routePreviewJobIds = optimizeRoute.proposal?.date === selectedDate
     ? optimizeRoute.proposal.orderedJobIds
-    : sortedJobs.map((job) => job.id);
+    : route?.optimization_result?.activeSegment
+      ? route.optimization_result.activeSegment.orderedJobIds
+      : sortedJobs.map((job) => job.id);
   const routePreviewJobs = routePreviewJobIds
     .map((jobId) => jobs?.find((job) => job.id === jobId))
     .filter((job): job is NonNullable<typeof job> => !!job);
@@ -222,7 +234,13 @@ export default function RoutesPage() {
         longitude: optimizeRoute.proposal.startLongitude,
         label: optimizeRoute.proposal.startLocation,
       }
-    : route?.start_latitude && route?.start_longitude
+    : route?.optimization_result?.activeSegment
+      ? {
+          latitude: route.optimization_result.activeSegment.latitude,
+          longitude: route.optimization_result.activeSegment.longitude,
+          label: route.optimization_result.activeSegment.startLocation,
+        }
+      : route?.start_latitude && route?.start_longitude
       ? {
           latitude: route.start_latitude,
           longitude: route.start_longitude,
@@ -237,13 +255,34 @@ export default function RoutesPage() {
     longitude: job.longitude,
   });
   const navigateToStop = (jobId: string) => {
+    const activeSegment = route?.status === "in_progress"
+      ? route.optimization_result?.activeSegment
+      : undefined;
+    if (activeSegment?.orderedJobIds.includes(jobId)) {
+      const activeJobs = activeSegment.orderedJobIds
+        .map((id) => jobs?.find((job) => job.id === id))
+        .filter((job): job is NonNullable<typeof job> => !!job);
+      const targetIndex = activeJobs.findIndex((job) => job.id === jobId);
+      const url = buildGoogleMapsDirectionsUrl({
+        start: {
+          address: activeSegment.startLocation,
+          latitude: activeSegment.latitude,
+          longitude: activeSegment.longitude,
+        },
+        stops: activeJobs.slice(0, targetIndex + 1).map(mapLocationForJob),
+        targetIndex,
+        maxWaypoints: getGoogleMapsWaypointLimit(navigator.userAgent),
+      });
+      if (url) window.location.assign(url);
+      return;
+    }
     const targetIndex = navigationJobs.findIndex((job) => job.id === jobId);
     if (targetIndex < 0) return;
 
     const previousJobs = navigationJobs.slice(0, targetIndex);
     let lastCompletedIndex = -1;
     previousJobs.forEach((job, index) => {
-      if (job.status === "completed") lastCompletedIndex = index;
+      if (job.status === "completed" || job.status === "in_progress") lastCompletedIndex = index;
     });
     const routeSegmentJobs = navigationJobs
       .slice(lastCompletedIndex + 1, targetIndex + 1)
@@ -321,7 +360,7 @@ export default function RoutesPage() {
             </p>
             {!isToday && (
               <button
-                onClick={() => setSelectedDate(todayStr)}
+                onClick={() => { setReplanningDate(null); setSelectedDate(todayStr); }}
                 className="text-xs text-blue-600 hover:underline"
               >
                 Jump to today
@@ -362,38 +401,51 @@ export default function RoutesPage() {
                     <StartLocationInput
                       value={startLocation}
                       onChange={handleStartLocationChange}
-                      disabled={routeIsLocked || optimizeRoute.isPending || sendSMS.isPending}
+                      disabled={(routeIsLocked && (!replanningRemaining || pendingJobs.length === 0)) || optimizeRoute.isPending || sendSMS.isPending}
+                      label={replanningRemaining ? "Current Location" : undefined}
+                      placeholder={replanningRemaining ? "Where are you now?" : undefined}
+                      hint={replanningRemaining ? "Detect your position or enter your current address before replanning" : undefined}
                     />
                   </div>
-                  <Button
-                    onClick={handleOptimize}
-                    disabled={
-                      !startLocation.trim() ||
-                      routeIsLocked ||
-                      optimizeRoute.isPending ||
-                      sendSMS.isPending
-                    }
-                  >
-                    {optimizeRoute.isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Optimizing...
-                      </>
-                    ) : (
-                      <>
-                        <Navigation className="w-4 h-4 mr-1.5" />
-                        {route ? "Re-optimize Route" : "Optimize Route"}
-                      </>
-                    )}
-                  </Button>
+                  {route?.status === "in_progress" && pendingJobs.length > 0 && !replanningRemaining && (
+                    <Button variant="outline" onClick={() => {
+                      setReplanningDate(selectedDate);
+                      setEditedLocations((previous) => ({ ...previous, [`remaining:${selectedDate}`]: "" }));
+                      setDetectedStartPoint(null);
+                      optimizeRoute.discard();
+                    }} disabled={optimizeRoute.isPending || optimizeRoute.isApplying}>
+                      Replan remaining stops
+                    </Button>
+                  )}
+                  {(!routeIsLocked || (replanningRemaining && pendingJobs.length > 0)) && (
+                    <Button
+                      onClick={handleOptimize}
+                      disabled={!startLocation.trim() || optimizeRoute.isPending || sendSMS.isPending}
+                    >
+                      {optimizeRoute.isPending ? (
+                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Optimizing...</>
+                      ) : (
+                        <><Navigation className="w-4 h-4 mr-1.5" />{replanningRemaining ? "Plan remaining route" : route ? "Re-optimize Route" : "Optimize Route"}</>
+                      )}
+                    </Button>
+                  )}
                 </div>
 
-                {routeIsLocked && (
+                {routeIsLocked && !replanningRemaining && (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
                     {route?.status === "completed"
                       ? "This workday is complete. Its saved route is locked."
                       : "This workday has started. Its saved route is locked while you work."}
                   </p>
+                )}
+                {replanningRemaining && route?.status === "in_progress" && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status">
+                    Choose your current location. Routemaster will reorder only pending stops; completed and active visits stay untouched. The new route is a preview until you apply it.
+                    <Button variant="link" size="sm" className="ml-1 h-auto p-0" onClick={() => {
+                      setReplanningDate(null);
+                      optimizeRoute.discard();
+                    }}>Cancel</Button>
+                  </div>
                 )}
                 {canPlanRemainingJobs && (
                   <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status">
@@ -414,7 +466,7 @@ export default function RoutesPage() {
                   <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4" aria-live="polite">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <h3 className="font-semibold text-gray-900">Review your proposed day</h3>
+                        <h3 className="font-semibold text-gray-900">{optimizeRoute.proposal.mode === "remaining" ? "Review the remaining route" : "Review your proposed day"}</h3>
                         <p className="text-sm text-gray-600">
                           {optimizeRoute.proposal.orderedJobIds.length} of {optimizeRoute.proposal.totalJobCount} stops included in the road route · {(
                             optimizeRoute.proposal.distanceMeters / 1000
@@ -476,9 +528,9 @@ export default function RoutesPage() {
                     )}
 
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
-                      <Button variant="outline" onClick={optimizeRoute.discard} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
-                      <Button onClick={optimizeRoute.apply} disabled={!proposalCanApply || routeIsLocked || optimizeRoute.isApplying}>
-                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : routeIsLocked ? "Workday route is locked" : optimizeRoute.proposal.skippedJobIds.length > 0 ? `Apply route for ${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"}` : "Apply this route"}
+                      <Button variant="outline" onClick={() => optimizeRoute.discard()} disabled={optimizeRoute.isApplying}>Discard proposal</Button>
+                      <Button onClick={optimizeRoute.apply} disabled={!proposalCanApply || (routeIsLocked && optimizeRoute.proposal.mode !== "remaining") || optimizeRoute.isApplying}>
+                        {optimizeRoute.isApplying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving route...</> : optimizeRoute.proposal.mode === "remaining" ? `Apply remaining route (${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"})` : routeIsLocked ? "Workday route is locked" : optimizeRoute.proposal.skippedJobIds.length > 0 ? `Apply route for ${optimizeRoute.proposal.orderedJobIds.length} ${optimizeRoute.proposal.orderedJobIds.length === 1 ? "stop" : "stops"}` : "Apply this route"}
                       </Button>
                     </div>
                   </div>
@@ -491,7 +543,7 @@ export default function RoutesPage() {
                       <div>
                         <h3 className="font-semibold text-green-900">Route applied and saved</h3>
                         <p className="text-sm text-green-800">
-                          {optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
+                          {optimizeRoute.appliedProposal.mode === "remaining" ? "Remaining route updated from your current location. Completed and active visits were kept as-is. " : ""}{optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
                           {optimizeRoute.appliedProposal.skippedJobIds.length > 0 ? ` ${optimizeRoute.appliedProposal.skippedJobIds.length} other job(s) remain unscheduled and visible below.` : ""}
                           {optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
                         </p>
@@ -505,7 +557,7 @@ export default function RoutesPage() {
                   <Button
                     variant="outline"
                     onClick={() => sendSMS.mutate(selectedDate)}
-                    disabled={sendSMS.isPending || optimizeRoute.isPending}
+                    disabled={sendSMS.isPending || optimizeRoute.isPending || optimizeRoute.isApplying || !!optimizeRoute.proposal}
                     className="w-full sm:w-auto"
                   >
                     {sendSMS.isPending ? (
@@ -696,7 +748,9 @@ export default function RoutesPage() {
                         <Button
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-700"
+                          disabled={updateStatus.isPending || optimizeRoute.isApplying}
                           onClick={() => {
+                            optimizeRoute.discard("Visit status changed, so the route preview was cleared. Replan to review the latest stops.");
                             updateStatus.mutate({
                               id: job.id,
                               status: "in_progress",
@@ -713,11 +767,15 @@ export default function RoutesPage() {
                         <Button
                           size="sm"
                           className="bg-green-600 hover:bg-green-700"
-                          onClick={() => updateStatus.mutate({
-                            id: job.id,
-                            status: "completed",
-                            date: job.scheduled_date,
-                          })}
+                          disabled={updateStatus.isPending || optimizeRoute.isApplying}
+                          onClick={() => {
+                            optimizeRoute.discard("Visit status changed, so the route preview was cleared. Replan to review the latest stops.");
+                            updateStatus.mutate({
+                              id: job.id,
+                              status: "completed",
+                              date: job.scheduled_date,
+                            });
+                          }}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                           Complete visit

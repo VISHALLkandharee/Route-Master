@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { jobsQueryKey } from './jobs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
@@ -20,6 +20,14 @@ export interface RouteRecord {
     appointmentConflictJobIds?: string[]
     unassignedJobIds?: string[]
     geometry?: [number, number][]
+    activeSegment?: {
+      startLocation: string
+      latitude: number
+      longitude: number
+      orderedJobIds: string[]
+      currentStopJobId: string | null
+      replannedAt: string
+    }
   }
   is_recalculated: boolean
 }
@@ -69,6 +77,8 @@ export function useLastStartLocation() {
 // ─── Optimize ─────────────────────────────────────────────────
 
 export interface RouteProposal {
+  mode: 'day' | 'remaining'
+  expectedOrderedJobIds?: string[]
   date: string
   timezone: string
   workdayStart: string
@@ -97,6 +107,7 @@ export interface RouteProposal {
   serviceDurationMinutes: number
   geometry: [number, number][]
   stops: { jobId: string; scheduledTime?: string; latestStartTime?: string | null; estimatedDurationMinutes?: number }[]
+  currentStopJobId?: string | null
 }
 
 export interface OptimizeProgress {
@@ -106,6 +117,7 @@ export interface OptimizeProgress {
 
 export function useOptimizeRoute() {
   const queryClient = useQueryClient()
+  const operationId = useRef(0)
   const [progress, setProgress] = useState<OptimizeProgress | null>(null)
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,12 +130,15 @@ export function useOptimizeRoute() {
       date,
       startLocation,
       startCoordinates,
+      mode = 'day',
     }: {
       date: string;
       startLocation: string;
       startCoordinates?: { latitude: number; longitude: number } | null;
+      mode?: 'day' | 'remaining';
     }
   ) => {
+    const thisOperation = ++operationId.current
     setIsPending(true)
     setError(null)
     setProgress(null)
@@ -138,6 +153,7 @@ export function useOptimizeRoute() {
           date,
           start_location: startLocation,
           start_coordinates: startCoordinates ?? undefined,
+          mode,
         }),
       })
 
@@ -149,6 +165,10 @@ export function useOptimizeRoute() {
 
       while (true) {
         const { done, value } = await reader.read()
+        if (thisOperation !== operationId.current) {
+          await reader.cancel().catch(() => undefined)
+          return
+        }
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
@@ -161,6 +181,7 @@ export function useOptimizeRoute() {
             const data = JSON.parse(line.slice(6))
 
             if (data.step === 'error') {
+              if (thisOperation !== operationId.current) return
               setError(data.message)
               toast.error(data.message)
               setIsPending(false)
@@ -169,24 +190,26 @@ export function useOptimizeRoute() {
             }
 
             if (data.step === 'preview' && data.proposal) {
+              if (thisOperation !== operationId.current) return
               setProposal(data.proposal as RouteProposal)
               setProgress({ step: 'preview', message: 'Route proposal ready to review.' })
               setIsPending(false)
               return
             }
 
-            setProgress({ step: data.step, message: data.message })
+            if (thisOperation === operationId.current) setProgress({ step: data.step, message: data.message })
           } catch {
             // ignore parse errors
           }
         }
       }
     } catch {
+      if (thisOperation !== operationId.current) return
       const message = 'Failed to optimize route. Please try again.'
       setError(message)
       toast.error(message)
     } finally {
-      setIsPending(false)
+      if (thisOperation === operationId.current) setIsPending(false)
     }
   }
 
@@ -194,7 +217,7 @@ export function useOptimizeRoute() {
     if (!proposal) return
     setIsApplying(true)
     try {
-      const response = await fetch('/api/routes/confirm', {
+      const response = await fetch(proposal.mode === 'remaining' ? '/api/routes/replan' : '/api/routes/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,10 +232,18 @@ export function useOptimizeRoute() {
           orderedJobIds: proposal.orderedJobIds,
           skippedJobIds: proposal.skippedJobIds,
           appointmentConflictJobIds: proposal.appointmentConflictJobIds,
+          currentStopJobId: proposal.currentStopJobId ?? null,
+          expectedOrderedJobIds: proposal.expectedOrderedJobIds ?? [],
         }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to save the reviewed route.')
+      if (!response.ok) {
+        if (response.status === 409) {
+          setProposal(null)
+          setProgress(null)
+        }
+        throw new Error(data.error || 'Failed to save the reviewed route.')
+      }
 
       queryClient.invalidateQueries({ queryKey: routesQueryKey(proposal.date) })
       queryClient.invalidateQueries({ queryKey: jobsQueryKey(proposal.date) })
@@ -235,11 +266,14 @@ export function useOptimizeRoute() {
     }
   }
 
-  const discard = () => {
-    if (proposal) toast.info('Proposal discarded. Your saved route was not changed.')
+  const discard = (reason?: string) => {
+    operationId.current += 1
+    if (proposal) toast.info(reason ?? 'Proposal discarded. Your saved route was not changed.')
+    else if (isPending && reason) toast.info(reason)
     setProposal(null)
     setProgress(null)
     setError(null)
+    setIsPending(false)
   }
 
   const dismissApplied = () => setAppliedProposal(null)
