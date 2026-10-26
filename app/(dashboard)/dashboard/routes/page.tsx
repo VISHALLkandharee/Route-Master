@@ -375,6 +375,21 @@ export default function RoutesPage() {
   const measuredActualMinutes = measuredVisits.reduce((total, visit) => total + visit.actualMinutes, 0);
   const measuredPlannedMinutes = measuredVisits.reduce((total, visit) => total + visit.plannedMinutes, 0);
   const serviceTimeDifference = measuredPlannedMinutes - measuredActualMinutes;
+  const routeStartedAt = route?.started_at ? Date.parse(route.started_at) : Number.NaN;
+  const routeCompletedAt = route?.completed_at ? Date.parse(route.completed_at) : Number.NaN;
+  const actualElapsedMinutes = route?.status === "completed"
+    && Number.isFinite(routeStartedAt)
+    && Number.isFinite(routeCompletedAt)
+    && routeCompletedAt >= routeStartedAt
+    ? Math.round((routeCompletedAt - routeStartedAt) / 60_000)
+    : null;
+  const plannedRouteJobs = sortedJobs.filter((job) => job.status !== "cancelled");
+  const plannedWorkdayMinutes = route?.total_duration_mins == null || route.is_recalculated
+    ? null
+    : route.total_duration_mins + plannedRouteJobs.reduce((total, job) => total + job.estimated_duration, 0);
+  const elapsedDifferenceMinutes = actualElapsedMinutes !== null && plannedWorkdayMinutes !== null
+    ? actualElapsedMinutes - plannedWorkdayMinutes
+    : null;
   const proposalCanApply = !!optimizeRoute.proposal && optimizeRoute.proposal.orderedJobIds.length > 0;
   const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
     ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
@@ -897,6 +912,25 @@ export default function RoutesPage() {
                 </p>
                 <p className="mt-1 text-xs text-blue-800">
                   Tracked for {measuredVisits.length} of {completedVisits.length} completed visits. This measures on-site time only; it excludes driving and waiting.
+                </p>
+              </div>
+            )}
+
+            {actualElapsedMinutes !== null && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4" role="status" aria-live="polite">
+                <p className="font-semibold text-indigo-950">Completed route: elapsed workday</p>
+                <p className="mt-1 text-sm text-indigo-900">
+                  {formatDuration(actualElapsedMinutes)} from Start Day to the final stop.
+                  {plannedWorkdayMinutes !== null && elapsedDifferenceMinutes !== null ? (
+                    <> The route estimate was {formatDuration(route?.total_duration_mins ?? 0)} driving plus {formatDuration(plannedRouteJobs.reduce((total, job) => total + job.estimated_duration, 0))} planned on-site time. {elapsedDifferenceMinutes === 0
+                      ? "Elapsed time matched the combined estimate."
+                      : `Elapsed time was ${formatDuration(Math.abs(elapsedDifferenceMinutes))} ${elapsedDifferenceMinutes > 0 ? "longer" : "shorter"} than that estimate.`}</>
+                  ) : route?.is_recalculated ? (
+                    " The route was replanned during the day, so its remaining-route estimate is not comparable with the full-day elapsed time."
+                  ) : null}
+                </p>
+                <p className="mt-1 text-xs text-indigo-800">
+                  Elapsed time includes travel, waiting, and breaks; it is not a measured driving-time comparison. It starts when you tap Start Day, so starting early can increase the elapsed total.
                 </p>
               </div>
             )}

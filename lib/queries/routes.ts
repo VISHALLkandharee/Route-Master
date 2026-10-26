@@ -12,6 +12,8 @@ export interface RouteRecord {
   status: 'pending' | 'optimized' | 'in_progress' | 'completed'
   total_distance_km: number | null
   total_duration_mins: number | null
+  started_at: string | null
+  completed_at: string | null
   start_location: string | null
   start_latitude: number | null
   start_longitude: number | null
