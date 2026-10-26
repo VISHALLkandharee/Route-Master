@@ -282,28 +282,67 @@ export function useOptimizeRoute() {
 }
 
 
+export interface SMSPreviewMessage {
+  jobId: string
+  jobTitle: string
+  clientName: string
+  phoneLast4: string
+  scheduledTime: string
+  latestStartTime: string | null
+  message: string
+}
+
+export interface SMSPreviewResult {
+  previewToken: string
+  orderedJobIds: string[]
+  deliveryMode: 'twilio' | 'mock' | 'unavailable'
+  messages: SMSPreviewMessage[]
+  skipped: { jobId: string; clientName: string; jobTitle: string; reason: string }[]
+}
+
 interface SendSMSResult {
   submitted: number
   skipped: number
   failed: number
 }
 
+export function usePrepareSMS() {
+  return useMutation({
+    mutationFn: async (date: string): Promise<SMSPreviewResult> => {
+      const response = await fetch('/api/sms/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, mode: 'preview' }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to prepare arrival messages')
+      return data as SMSPreviewResult
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+}
+
 export function useSendSMS() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (date: string): Promise<SendSMSResult> => {
+    mutationFn: async (input: {
+      date: string
+      previewToken: string
+      orderedJobIds: string[]
+      messages: { jobId: string; message: string }[]
+    }): Promise<SendSMSResult> => {
       const response = await fetch('/api/sms/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ ...input, mode: 'send' }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to send SMS')
       return data
     },
-    onSuccess: (data, date) => {
-      queryClient.invalidateQueries({ queryKey: jobsQueryKey(date) })
+    onSuccess: (data, input) => {
+      queryClient.invalidateQueries({ queryKey: jobsQueryKey(input.date) })
 
       const parts = []
       if (data.submitted > 0) parts.push(`${data.submitted} submitted to the SMS provider`)

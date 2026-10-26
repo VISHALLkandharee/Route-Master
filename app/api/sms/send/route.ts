@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'node:crypto'
 import { createClient } from '@/lib/supabase/server'
-import { generateSMSMessage } from '@/lib/sms/generate-message'
+import { generateSMSMessage, MAX_SMS_CHARACTERS, OPT_OUT_SUFFIX } from '@/lib/sms/generate-message'
 import { isSmsDeliveryConfigured, sendSMS } from '@/lib/sms/sender'
 import { rateLimit } from '@/lib/rate-limit'
 import { getSubscriptionAccess } from '@/lib/subscription-access'
@@ -19,9 +20,10 @@ interface JobWithClient {
   scheduled_time: string
   latest_start_time: string | null
   estimated_duration: number
+  status: 'pending' | 'in_progress'
   sms_sent: boolean
   order_index: number
-  client: ClientRecord
+  client: ClientRecord | null
 }
 
 export async function POST(request: NextRequest) {
@@ -61,13 +63,6 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (!isSmsDeliveryConfigured()) {
-    return NextResponse.json(
-      { error: 'SMS delivery is not configured. Contact support before sending client messages.' },
-      { status: 503 },
-    )
-  }
-
   let body: unknown
   try {
     body = await request.json()
@@ -80,6 +75,18 @@ export async function POST(request: NextRequest) {
       : null
   if (!isDateOnly(date)) {
     return NextResponse.json({ error: 'Date is required' }, { status: 400 })
+  }
+  const mode = typeof body === 'object' && body !== null && 'mode' in body
+    ? (body as { mode?: unknown }).mode
+    : null
+  if (mode !== 'preview' && mode !== 'send') {
+    return NextResponse.json({ error: 'Review messages before sending them.' }, { status: 400 })
+  }
+  if (mode === 'send' && !isSmsDeliveryConfigured()) {
+    return NextResponse.json(
+      { error: 'SMS delivery is not configured. Contact support before sending client messages.' },
+      { status: 503 },
+    )
   }
 
   const { data: route, error: routeError } = await supabase
@@ -123,7 +130,7 @@ export async function POST(request: NextRequest) {
   // ── Load jobs in optimized order ────────────────────────────
   const { data: jobs, error: jobsError } = await supabase
     .from('jobs')
-    .select('id, title, scheduled_time, latest_start_time, estimated_duration, sms_sent, order_index, client:clients(id, full_name, phone, preferred_contact)')
+    .select('id, title, scheduled_time, latest_start_time, estimated_duration, status, sms_sent, order_index, client:clients(id, full_name, phone, preferred_contact)')
     .eq('scheduled_date', date)
     .in('status', ['pending', 'in_progress'])
     .is('deleted_at', null)
@@ -151,62 +158,150 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'There are no active stops in this saved route to message.' }, { status: 400 })
   }
 
-  const results = {
-    submitted: 0,
-    skipped: 0,
-    failed: 0,
-    details: [] as { jobId: string; status: string; reason?: string }[],
+  const eligibleJobs: JobWithClient[] = []
+  const skippedDetails: { jobId: string; clientName: string; jobTitle: string; reason: string }[] = []
+  for (const job of routeJobs) {
+    const client = job.client
+    let reason: string | null = null
+
+    if (job.status === 'in_progress') reason = 'The visit has already started'
+    else if (job.sms_sent) reason = 'An arrival text was already sent'
+    else if (appointmentConflictJobIds.has(job.id)) reason = 'Confirm the appointment timing before messaging'
+    else if (!client || client.preferred_contact !== 'sms') {
+      reason = client?.preferred_contact === 'call'
+        ? 'Client prefers phone calls'
+        : 'Client has not opted in to SMS'
+    }
+
+    if (reason) {
+      skippedDetails.push({ jobId: job.id, clientName: client?.full_name ?? 'Client', jobTitle: job.title, reason })
+    } else {
+      eligibleJobs.push(job)
+    }
   }
 
-  for (let i = 0; i < routeJobs.length; i++) {
-    const job = routeJobs[i]
-    const client = job.client
+  const previewToken = createHash('sha256').update(JSON.stringify({
+    date,
+    routeStatus: route.status,
+    orderedJobIds,
+    appointmentConflictJobIds: [...appointmentConflictJobIds].sort(),
+    jobs: routeJobs.map((job) => ({
+      id: job.id,
+      title: job.title,
+      scheduled_time: job.scheduled_time,
+      latest_start_time: job.latest_start_time,
+      status: job.status,
+      sms_sent: job.sms_sent,
+      order_index: job.order_index,
+      client: job.client,
+    })),
+  })).digest('hex')
 
-    // Already sent — skip silently
-    if (job.sms_sent) {
-      results.skipped++
-      results.details.push({
-        jobId: job.id,
-        status: 'skipped',
-        reason: 'SMS already sent',
-      })
-      continue
-    }
-
-    // Do not send a stale appointment-time message for jobs whose route was
-    // deliberately planned outside their saved time window.
-    if (appointmentConflictJobIds.has(job.id)) {
-      results.skipped++
-      results.details.push({
-        jobId: job.id,
-        status: 'skipped',
-        reason: 'Appointment timing needs confirmation before messaging',
-      })
-      continue
-    }
-
-    // Client opted out — skip
-    if (!client || client.preferred_contact !== 'sms') {
-      results.skipped++
-      results.details.push({
-        jobId: job.id,
-        status: 'skipped',
-        reason: client?.preferred_contact === 'call'
-          ? 'Client prefers phone calls, not SMS'
-          : 'Client opted out of SMS notifications',
-      })
-      continue
-    }
-
-    try {
-      // Use the client's saved appointment window; this path needs no AI API.
-      const message = await generateSMSMessage({
-        clientName: client.full_name,
+  if (mode === 'preview') {
+    const messages = await Promise.all(eligibleJobs.map(async (job) => ({
+      jobId: job.id,
+      jobTitle: job.title,
+      clientName: job.client!.full_name,
+      phoneLast4: job.client!.phone.replace(/\D/g, '').slice(-4),
+      scheduledTime: job.scheduled_time,
+      latestStartTime: job.latest_start_time,
+      message: await generateSMSMessage({
+        clientName: job.client!.full_name,
         businessName,
         jobTitle: job.title,
         scheduledTime: job.scheduled_time,
         latestStartTime: job.latest_start_time,
-      })
+      }),
+    })))
+
+    return NextResponse.json({
+      previewToken,
+      orderedJobIds,
+      deliveryMode: process.env.NODE_ENV !== 'production'
+        ? 'mock'
+        : isSmsDeliveryConfigured() ? 'twilio' : 'unavailable',
+      messages,
+      skipped: skippedDetails,
+    })
+  }
+
+  const submittedMessages = typeof body === 'object' && body !== null && 'messages' in body
+    ? (body as { messages?: unknown }).messages
+    : null
+  const expectedPreviewToken = typeof body === 'object' && body !== null && 'previewToken' in body
+    ? (body as { previewToken?: unknown }).previewToken
+    : null
+  const expectedOrderedJobIds = typeof body === 'object' && body !== null && 'orderedJobIds' in body
+    ? (body as { orderedJobIds?: unknown }).orderedJobIds
+    : null
+
+  if (
+    expectedPreviewToken !== previewToken ||
+    !Array.isArray(expectedOrderedJobIds) ||
+    expectedOrderedJobIds.length !== orderedJobIds.length ||
+    expectedOrderedJobIds.some((id, index) => id !== orderedJobIds[index])
+  ) {
+    return NextResponse.json(
+      { error: 'The route or client details changed after review. Prepare the messages again.' },
+      { status: 409 },
+    )
+  }
+
+  if (!Array.isArray(submittedMessages) || submittedMessages.length !== eligibleJobs.length) {
+    return NextResponse.json({ error: 'Review every eligible message before sending.' }, { status: 400 })
+  }
+
+  const messageByJobId = new Map<string, string>()
+  for (const item of submittedMessages) {
+    if (
+      typeof item !== 'object' || item === null ||
+      !('jobId' in item) || typeof item.jobId !== 'string' ||
+      !('message' in item) || typeof item.message !== 'string' ||
+      messageByJobId.has(item.jobId)
+    ) {
+      return NextResponse.json({ error: 'One or more reviewed messages are invalid.' }, { status: 400 })
+    }
+
+    const message = item.message.trim()
+    if (
+      message.length === 0 ||
+      message.length > MAX_SMS_CHARACTERS ||
+      !message.endsWith(OPT_OUT_SUFFIX.trim()) ||
+      !eligibleJobs.some((job) => job.id === item.jobId)
+    ) {
+      return NextResponse.json(
+        { error: `Messages must be under ${MAX_SMS_CHARACTERS} characters and retain the opt-out instruction.` },
+        { status: 400 },
+      )
+    }
+    messageByJobId.set(item.jobId, message)
+  }
+
+  if (eligibleJobs.some((job) => !messageByJobId.has(job.id))) {
+    return NextResponse.json({ error: 'Review every eligible message before sending.' }, { status: 400 })
+  }
+
+  const results = {
+    submitted: 0,
+    skipped: skippedDetails.length,
+    failed: 0,
+    details: skippedDetails.map((item) => ({
+      jobId: item.jobId,
+      status: 'skipped',
+      reason: item.reason,
+    })) as { jobId: string; status: string; reason?: string }[],
+  }
+
+  for (const job of eligibleJobs) {
+    const client = job.client
+    if (!client) {
+      results.failed++
+      results.details.push({ jobId: job.id, status: 'failed', reason: 'Client details are unavailable' })
+      continue
+    }
+
+    try {
+      const message = messageByJobId.get(job.id)!
 
       // Send (mock in development, real Twilio in production)
       const smsResult = await sendSMS(client.phone, message)
