@@ -13,6 +13,8 @@ import {
   Briefcase,
   CheckCircle2,
   FileText,
+  PackageCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { useUIStore } from "@/lib/store/ui-store";
 import { useJobsByDate, useUpdateJobStatus } from "@/lib/queries/jobs";
+import { useSupplies } from "@/lib/queries/supplies";
 import {
   useRouteByDate,
   useOptimizeRoute,
@@ -44,6 +47,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { StartLocationInput } from "@/components/dashboard/routes/start-location-input";
 import { PageTransition } from "@/components/dashboard/page-transition";
 import { getVisitDurationMinutes } from "@/lib/time/visit-duration";
+import { LogUsageSheet } from "@/components/dashboard/supplies/log-usage-sheet";
 import {
   buildGoogleMapsDirectionsUrl,
   getGoogleMapsWaypointLimit,
@@ -117,6 +121,7 @@ function formatAppointmentWindow(start: string, latestStart?: string | null) {
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
+  const { data: supplies } = useSupplies();
   const { data: route } = useRouteByDate(selectedDate);
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
@@ -124,11 +129,19 @@ export default function RoutesPage() {
   const sendSMS = useSendSMS();
   const startDay = useStartDay();
   const updateStatus = useUpdateJobStatus();
+  const lowStockSupplies = (supplies ?? []).filter((supply) => supply.is_low_stock);
 
   const [editedLocations, setEditedLocations] = useState<Record<string, string>>({});
   const [smsReviewOpen, setSMSReviewOpen] = useState(false);
   const [smsReview, setSMSReview] = useState<SMSPreviewResult | null>(null);
   const [smsDrafts, setSMSDrafts] = useState<Record<string, string>>({});
+  const [supplyUsageOpen, setSupplyUsageOpen] = useState(false);
+  const [supplyUsageJob, setSupplyUsageJob] = useState<{
+    id: string;
+    scheduled_date: string;
+    title: string;
+    clientName: string;
+  } | null>(null);
   const [replanningDate, setReplanningDate] = useState<string | null>(null);
   const [detectedStartPoint, setDetectedStartPoint] = useState<{
     date: string;
@@ -263,6 +276,15 @@ export default function RoutesPage() {
           .map((id) => jobs?.find((j) => j.id === id))
           .filter((j): j is NonNullable<typeof j> => !!j)
       : routableJobs;
+  const unresolvedRouteJobs = sortedJobs.filter(
+    (job) => job.status === "pending" || job.status === "in_progress",
+  );
+  const savedTimingConflictIds = new Set(
+    route?.optimization_result?.appointmentConflictJobIds ?? [],
+  );
+  const actionableSavedTimingConflicts = unresolvedRouteJobs.filter((job) =>
+    savedTimingConflictIds.has(job.id),
+  );
   const unscheduledJobs = hasSavedRouteStops
     ? routableJobs.filter((job) => !orderedJobIds.includes(job.id))
     : [];
@@ -445,6 +467,24 @@ export default function RoutesPage() {
           </Button>
         </div>
 
+        {lowStockSupplies.length > 0 && route?.status !== "in_progress" && route?.status !== "completed" && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4" role="status">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-950">
+                {lowStockSupplies.length} supply item{lowStockSupplies.length === 1 ? " is" : "s are"} at or below minimum stock
+              </p>
+              <p className="mt-0.5 text-sm text-amber-900">
+                {lowStockSupplies.slice(0, 3).map((supply) => `${supply.name} (${supply.current_quantity} ${supply.unit})`).join(" · ")}
+                {lowStockSupplies.length > 3 ? ` · +${lowStockSupplies.length - 3} more` : ""}
+              </p>
+              <Link href="/dashboard/supplies" className="mt-1 inline-block text-sm font-medium text-amber-950 underline underline-offset-2">
+                Review supplies before heading out
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* No jobs */}
         {!jobsLoading && routableJobs.length === 0 && (
           <Card>
@@ -524,9 +564,9 @@ export default function RoutesPage() {
                     The earlier route is complete. Plan the {routableJobs.length} remaining active {routableJobs.length === 1 ? "stop" : "stops"} as a follow-up route.
                   </p>
                 )}
-                {orderedJobIds.length > 1 && (route?.optimization_result?.appointmentConflictJobIds?.length ?? 0) > 0 && (
+                {unresolvedRouteJobs.length > 1 && actionableSavedTimingConflicts.length > 0 && (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
-                    This saved road route includes {route?.optimization_result?.appointmentConflictJobIds?.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
+                    This saved road route includes {actionableSavedTimingConflicts.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
                   </p>
                 )}
 
@@ -552,7 +592,7 @@ export default function RoutesPage() {
                       </div>
                     </div>
 
-                    {optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
+                    {optimizeRoute.proposal.orderedJobIds.length > 1 && optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
                         <p className="font-semibold">The road route includes these stops, but {optimizeRoute.proposal.appointmentConflictJobIds.length} appointment time(s) may have passed or conflict with your work hours.</p>
                         <p className="mt-1">Review the order, then confirm timing with the affected clients. Routemaster keeps the stops in the route instead of dropping them.</p>
@@ -617,7 +657,7 @@ export default function RoutesPage() {
                         <p className="text-sm text-green-800">
                           {optimizeRoute.appliedProposal.mode === "remaining" ? "Remaining route updated from your current location. Completed and active visits were kept as-is. " : ""}{optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
                           {optimizeRoute.appliedProposal.skippedJobIds.length > 0 ? ` ${optimizeRoute.appliedProposal.skippedJobIds.length} other job(s) remain unscheduled and visible below.` : ""}
-                          {optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
+                          {optimizeRoute.appliedProposal.orderedJobIds.length > 1 && optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
                         </p>
                       </div>
                     </div>
@@ -751,7 +791,7 @@ export default function RoutesPage() {
                           : "border-gray-100"
                   }`}
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:gap-4">
                     {/* Stop number */}
                     <div
                       className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
@@ -815,12 +855,33 @@ export default function RoutesPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
                       <Badge variant="outline" className="text-xs">
                         {job.latest_start_time
                           ? `${job.scheduled_time.slice(0, 5)}–${job.latest_start_time.slice(0, 5)}`
                           : job.scheduled_time.slice(0, 5)}
                       </Badge>
+
+                      {(job.status === "in_progress" || isCompleted) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-amber-200 text-amber-800 hover:bg-amber-50"
+                          onClick={() => {
+                            setSupplyUsageJob({
+                              id: job.id,
+                              scheduled_date: job.scheduled_date,
+                              title: job.title,
+                              clientName: job.client?.full_name ?? "Client",
+                            });
+                            setSupplyUsageOpen(true);
+                          }}
+                          title="Record supplies used for this visit"
+                        >
+                          <PackageCheck className="w-3.5 h-3.5 mr-1" />
+                          <span className="hidden sm:inline">Supplies</span>
+                        </Button>
+                      )}
 
                       {!isCompleted && !isCancelled && (
                         <Button
@@ -962,6 +1023,14 @@ export default function RoutesPage() {
           </div>
         )}
       </div>
+      <LogUsageSheet
+        open={supplyUsageOpen}
+        onOpenChange={(open) => {
+          setSupplyUsageOpen(open);
+          if (!open) setSupplyUsageJob(null);
+        }}
+        jobContext={supplyUsageJob}
+      />
       <Dialog open={smsReviewOpen} onOpenChange={setSMSReviewOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
