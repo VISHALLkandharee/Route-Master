@@ -30,6 +30,7 @@ export interface Job {
     id: string
     full_name: string
     phone: string
+    notes: string | null
   }
 }
 export interface JobInput {
@@ -55,7 +56,7 @@ export function useJobsByDate(date: string | null) {
     queryFn: async (): Promise<Job[]> => {
       const { data, error } = await supabase
         .from('jobs')
-        .select('*, client:clients(id, full_name, phone)')
+        .select('*, client:clients(id, full_name, phone, notes)')
         .eq('scheduled_date', date)
         .is('deleted_at', null)
         .order('order_index', { ascending: true })
@@ -107,7 +108,7 @@ export function useCreateJob() {
           latitude: client.latitude,
           longitude: client.longitude,
         })
-        .select('*, client:clients(id, full_name, phone)')
+        .select('*, client:clients(id, full_name, phone, notes)')
         .single()
 
       if (error) {
@@ -151,7 +152,7 @@ export function useUpdateJob() {
           notes: input.notes || null,
         })
         .eq('id', id)
-        .select('*, client:clients(id, full_name, phone)')
+        .select('*, client:clients(id, full_name, phone, notes)')
         .single()
 
       if (error) {

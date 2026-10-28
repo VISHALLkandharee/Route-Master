@@ -12,25 +12,42 @@ import {
   Route as RouteIcon,
   Briefcase,
   CheckCircle2,
+  FileText,
+  PackageCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useUIStore } from "@/lib/store/ui-store";
 import { useJobsByDate, useUpdateJobStatus } from "@/lib/queries/jobs";
+import { useSupplies } from "@/lib/queries/supplies";
 import {
   useRouteByDate,
   useOptimizeRoute,
   useLastStartLocation,
+  usePrepareSMS,
   useSendSMS,
   useStartDay,
+  type SMSPreviewResult,
 } from "@/lib/queries/routes";
 import { MessageSquare } from "lucide-react";
+import { MAX_SMS_CHARACTERS, OPT_OUT_SUFFIX } from "@/lib/sms/generate-message";
 import { AnimatePresence, motion } from "framer-motion";
 import { StartLocationInput } from "@/components/dashboard/routes/start-location-input";
 import { PageTransition } from "@/components/dashboard/page-transition";
 import { getVisitDurationMinutes } from "@/lib/time/visit-duration";
+import { LogUsageSheet } from "@/components/dashboard/supplies/log-usage-sheet";
 import {
   buildGoogleMapsDirectionsUrl,
   getGoogleMapsWaypointLimit,
@@ -104,14 +121,27 @@ function formatAppointmentWindow(start: string, latestStart?: string | null) {
 export default function RoutesPage() {
   const { selectedDate, setSelectedDate } = useUIStore();
   const { data: jobs, isLoading: jobsLoading } = useJobsByDate(selectedDate);
+  const { data: supplies } = useSupplies();
   const { data: route } = useRouteByDate(selectedDate);
   const { data: lastStartLocation } = useLastStartLocation();
   const optimizeRoute = useOptimizeRoute();
+  const prepareSMS = usePrepareSMS();
   const sendSMS = useSendSMS();
   const startDay = useStartDay();
   const updateStatus = useUpdateJobStatus();
+  const lowStockSupplies = (supplies ?? []).filter((supply) => supply.is_low_stock);
 
   const [editedLocations, setEditedLocations] = useState<Record<string, string>>({});
+  const [smsReviewOpen, setSMSReviewOpen] = useState(false);
+  const [smsReview, setSMSReview] = useState<SMSPreviewResult | null>(null);
+  const [smsDrafts, setSMSDrafts] = useState<Record<string, string>>({});
+  const [supplyUsageOpen, setSupplyUsageOpen] = useState(false);
+  const [supplyUsageJob, setSupplyUsageJob] = useState<{
+    id: string;
+    scheduled_date: string;
+    title: string;
+    clientName: string;
+  } | null>(null);
   const [replanningDate, setReplanningDate] = useState<string | null>(null);
   const [detectedStartPoint, setDetectedStartPoint] = useState<{
     date: string;
@@ -139,6 +169,46 @@ export default function RoutesPage() {
         ? { date: selectedDate, label: val, ...coordinates }
         : null,
     );
+  };
+
+  const handleReviewArrivalTexts = async () => {
+    if (!selectedDate) return;
+    try {
+      const preview = await prepareSMS.mutateAsync(selectedDate);
+      setSMSReview(preview);
+      setSMSDrafts(Object.fromEntries(preview.messages.map((item) => [item.jobId, item.message])));
+      setSMSReviewOpen(true);
+    } catch {
+      // The mutation surfaces its server error as a toast.
+    }
+  };
+
+  const reviewedMessagesAreValid = Boolean(
+    smsReview?.messages.length &&
+    smsReview.messages.every((item) => {
+      const message = (smsDrafts[item.jobId] ?? "").trim();
+      return message.length <= MAX_SMS_CHARACTERS && message.endsWith(OPT_OUT_SUFFIX.trim());
+    }),
+  );
+
+  const handleSendReviewedTexts = async () => {
+    if (!selectedDate || !smsReview || !reviewedMessagesAreValid) return;
+    try {
+      await sendSMS.mutateAsync({
+        date: selectedDate,
+        previewToken: smsReview.previewToken,
+        orderedJobIds: smsReview.orderedJobIds,
+        messages: smsReview.messages.map((item) => ({
+          jobId: item.jobId,
+          message: (smsDrafts[item.jobId] ?? "").trim(),
+        })),
+      });
+      setSMSReviewOpen(false);
+      setSMSReview(null);
+      setSMSDrafts({});
+    } catch {
+      // The mutation surfaces its server error as a toast; keep drafts for correction.
+    }
   };
 
   useEffect(() => {
@@ -206,6 +276,15 @@ export default function RoutesPage() {
           .map((id) => jobs?.find((j) => j.id === id))
           .filter((j): j is NonNullable<typeof j> => !!j)
       : routableJobs;
+  const unresolvedRouteJobs = sortedJobs.filter(
+    (job) => job.status === "pending" || job.status === "in_progress",
+  );
+  const savedTimingConflictIds = new Set(
+    route?.optimization_result?.appointmentConflictJobIds ?? [],
+  );
+  const actionableSavedTimingConflicts = unresolvedRouteJobs.filter((job) =>
+    savedTimingConflictIds.has(job.id),
+  );
   const unscheduledJobs = hasSavedRouteStops
     ? routableJobs.filter((job) => !orderedJobIds.includes(job.id))
     : [];
@@ -318,6 +397,21 @@ export default function RoutesPage() {
   const measuredActualMinutes = measuredVisits.reduce((total, visit) => total + visit.actualMinutes, 0);
   const measuredPlannedMinutes = measuredVisits.reduce((total, visit) => total + visit.plannedMinutes, 0);
   const serviceTimeDifference = measuredPlannedMinutes - measuredActualMinutes;
+  const routeStartedAt = route?.started_at ? Date.parse(route.started_at) : Number.NaN;
+  const routeCompletedAt = route?.completed_at ? Date.parse(route.completed_at) : Number.NaN;
+  const actualElapsedMinutes = route?.status === "completed"
+    && Number.isFinite(routeStartedAt)
+    && Number.isFinite(routeCompletedAt)
+    && routeCompletedAt >= routeStartedAt
+    ? Math.round((routeCompletedAt - routeStartedAt) / 60_000)
+    : null;
+  const plannedRouteJobs = sortedJobs.filter((job) => job.status !== "cancelled");
+  const plannedWorkdayMinutes = route?.total_duration_mins == null || route.is_recalculated
+    ? null
+    : route.total_duration_mins + plannedRouteJobs.reduce((total, job) => total + job.estimated_duration, 0);
+  const elapsedDifferenceMinutes = actualElapsedMinutes !== null && plannedWorkdayMinutes !== null
+    ? actualElapsedMinutes - plannedWorkdayMinutes
+    : null;
   const proposalCanApply = !!optimizeRoute.proposal && optimizeRoute.proposal.orderedJobIds.length > 0;
   const proposalDistanceChangeKm = optimizeRoute.proposal?.currentDistanceMeters !== null && optimizeRoute.proposal?.currentDistanceMeters !== undefined
     ? (optimizeRoute.proposal.currentDistanceMeters - optimizeRoute.proposal.distanceMeters) / 1000
@@ -372,6 +466,24 @@ export default function RoutesPage() {
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
+
+        {lowStockSupplies.length > 0 && route?.status !== "in_progress" && route?.status !== "completed" && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4" role="status">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-950">
+                {lowStockSupplies.length} supply item{lowStockSupplies.length === 1 ? " is" : "s are"} at or below minimum stock
+              </p>
+              <p className="mt-0.5 text-sm text-amber-900">
+                {lowStockSupplies.slice(0, 3).map((supply) => `${supply.name} (${supply.current_quantity} ${supply.unit})`).join(" · ")}
+                {lowStockSupplies.length > 3 ? ` · +${lowStockSupplies.length - 3} more` : ""}
+              </p>
+              <Link href="/dashboard/supplies" className="mt-1 inline-block text-sm font-medium text-amber-950 underline underline-offset-2">
+                Review supplies before heading out
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* No jobs */}
         {!jobsLoading && routableJobs.length === 0 && (
@@ -452,9 +564,9 @@ export default function RoutesPage() {
                     The earlier route is complete. Plan the {routableJobs.length} remaining active {routableJobs.length === 1 ? "stop" : "stops"} as a follow-up route.
                   </p>
                 )}
-                {orderedJobIds.length > 1 && (route?.optimization_result?.appointmentConflictJobIds?.length ?? 0) > 0 && (
+                {unresolvedRouteJobs.length > 1 && actionableSavedTimingConflicts.length > 0 && (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
-                    This saved road route includes {route?.optimization_result?.appointmentConflictJobIds?.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
+                    This saved road route includes {actionableSavedTimingConflicts.length} stop(s) whose appointment windows may have passed or conflict with configured work hours. Confirm timing with those clients.
                   </p>
                 )}
 
@@ -480,7 +592,7 @@ export default function RoutesPage() {
                       </div>
                     </div>
 
-                    {optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
+                    {optimizeRoute.proposal.orderedJobIds.length > 1 && optimizeRoute.proposal.appointmentConflictJobIds.length > 0 && (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
                         <p className="font-semibold">The road route includes these stops, but {optimizeRoute.proposal.appointmentConflictJobIds.length} appointment time(s) may have passed or conflict with your work hours.</p>
                         <p className="mt-1">Review the order, then confirm timing with the affected clients. Routemaster keeps the stops in the route instead of dropping them.</p>
@@ -545,7 +657,7 @@ export default function RoutesPage() {
                         <p className="text-sm text-green-800">
                           {optimizeRoute.appliedProposal.mode === "remaining" ? "Remaining route updated from your current location. Completed and active visits were kept as-is. " : ""}{optimizeRoute.appliedProposal.orderedJobIds.length} {optimizeRoute.appliedProposal.orderedJobIds.length === 1 ? "stop" : "stops"} · {(optimizeRoute.appliedProposal.distanceMeters / 1000).toFixed(1)} km · {formatDuration(optimizeRoute.appliedProposal.driveDurationSeconds / 60)} driving. The map and stop list below show the saved route.
                           {optimizeRoute.appliedProposal.skippedJobIds.length > 0 ? ` ${optimizeRoute.appliedProposal.skippedJobIds.length} other job(s) remain unscheduled and visible below.` : ""}
-                          {optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
+                          {optimizeRoute.appliedProposal.orderedJobIds.length > 1 && optimizeRoute.appliedProposal.appointmentConflictJobIds.length > 0 ? " Appointment-time conflicts were flagged; confirm timing with affected clients before sending messages." : ""}
                         </p>
                       </div>
                     </div>
@@ -556,26 +668,26 @@ export default function RoutesPage() {
                 {route && !optimizeRoute.isPending && (
                   <Button
                     variant="outline"
-                    onClick={() => sendSMS.mutate(selectedDate)}
-                    disabled={sendSMS.isPending || optimizeRoute.isPending || optimizeRoute.isApplying || !!optimizeRoute.proposal}
+                    onClick={handleReviewArrivalTexts}
+                    disabled={prepareSMS.isPending || sendSMS.isPending || optimizeRoute.isPending || optimizeRoute.isApplying || !!optimizeRoute.proposal}
                     className="w-full sm:w-auto"
                   >
-                    {sendSMS.isPending ? (
+                    {prepareSMS.isPending ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Sending SMS...
+                        Preparing messages...
                       </>
                     ) : (
                       <>
                         <MessageSquare className="w-4 h-4 mr-1.5" />
-                        Send Arrival Texts
+                        Review Arrival Texts
                       </>
                     )}
                   </Button>
                 )}
                 {route && !optimizeRoute.isPending && (
                   <p className="text-xs text-gray-500">
-                    Only clients who prefer SMS receive a message. Call and no-contact preferences are respected.
+                    Review each message before sending. Only clients who prefer SMS are included; call and no-contact preferences are respected.
                   </p>
                 )}
               </div>
@@ -679,7 +791,7 @@ export default function RoutesPage() {
                           : "border-gray-100"
                   }`}
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:gap-4">
                     {/* Stop number */}
                     <div
                       className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
@@ -721,15 +833,55 @@ export default function RoutesPage() {
                       <p className="text-xs text-gray-500 mt-0.5">
                         {job.client?.full_name} · {job.address}
                       </p>
+                      {(job.client?.notes?.trim() || job.notes?.trim()) && (
+                        <details
+                          className="mt-2 max-w-2xl rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-950"
+                          open={isCurrent}
+                        >
+                          <summary className="flex cursor-pointer list-none items-center gap-1.5 font-semibold marker:hidden">
+                            <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            Stop notes
+                          </summary>
+                          <div className="mt-2 space-y-1.5 whitespace-pre-wrap break-words leading-relaxed">
+                            {job.client?.notes?.trim() && (
+                              <p><span className="font-semibold">Client:</span> {job.client.notes.trim()}</p>
+                            )}
+                            {job.notes?.trim() && (
+                              <p><span className="font-semibold">This job:</span> {job.notes.trim()}</p>
+                            )}
+                          </div>
+                        </details>
+                      )}
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
                       <Badge variant="outline" className="text-xs">
                         {job.latest_start_time
                           ? `${job.scheduled_time.slice(0, 5)}–${job.latest_start_time.slice(0, 5)}`
                           : job.scheduled_time.slice(0, 5)}
                       </Badge>
+
+                      {(job.status === "in_progress" || isCompleted) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-amber-200 text-amber-800 hover:bg-amber-50"
+                          onClick={() => {
+                            setSupplyUsageJob({
+                              id: job.id,
+                              scheduled_date: job.scheduled_date,
+                              title: job.title,
+                              clientName: job.client?.full_name ?? "Client",
+                            });
+                            setSupplyUsageOpen(true);
+                          }}
+                          title="Record supplies used for this visit"
+                        >
+                          <PackageCheck className="w-3.5 h-3.5 mr-1" />
+                          <span className="hidden sm:inline">Supplies</span>
+                        </Button>
+                      )}
 
                       {!isCompleted && !isCancelled && (
                         <Button
@@ -825,6 +977,25 @@ export default function RoutesPage() {
               </div>
             )}
 
+            {actualElapsedMinutes !== null && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4" role="status" aria-live="polite">
+                <p className="font-semibold text-indigo-950">Completed route: elapsed workday</p>
+                <p className="mt-1 text-sm text-indigo-900">
+                  {formatDuration(actualElapsedMinutes)} from Start Day to the final stop.
+                  {plannedWorkdayMinutes !== null && elapsedDifferenceMinutes !== null ? (
+                    <> The route estimate was {formatDuration(route?.total_duration_mins ?? 0)} driving plus {formatDuration(plannedRouteJobs.reduce((total, job) => total + job.estimated_duration, 0))} planned on-site time. {elapsedDifferenceMinutes === 0
+                      ? "Elapsed time matched the combined estimate."
+                      : `Elapsed time was ${formatDuration(Math.abs(elapsedDifferenceMinutes))} ${elapsedDifferenceMinutes > 0 ? "longer" : "shorter"} than that estimate.`}</>
+                  ) : route?.is_recalculated ? (
+                    " The route was replanned during the day, so its remaining-route estimate is not comparable with the full-day elapsed time."
+                  ) : null}
+                </p>
+                <p className="mt-1 text-xs text-indigo-800">
+                  Elapsed time includes travel, waiting, and breaks; it is not a measured driving-time comparison. It starts when you tap Start Day, so starting early can increase the elapsed total.
+                </p>
+              </div>
+            )}
+
             {/* Route workday completion */}
             {sortedJobs.every(
               (j) => j.status === "completed" || j.status === "cancelled",
@@ -852,6 +1023,88 @@ export default function RoutesPage() {
           </div>
         )}
       </div>
+      <LogUsageSheet
+        open={supplyUsageOpen}
+        onOpenChange={(open) => {
+          setSupplyUsageOpen(open);
+          if (!open) setSupplyUsageJob(null);
+        }}
+        jobContext={supplyUsageJob}
+      />
+      <Dialog open={smsReviewOpen} onOpenChange={setSMSReviewOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review arrival messages</DialogTitle>
+            <DialogDescription>
+              Check the recipient and scheduled appointment window, edit the wording if needed, then choose whether to send. These are appointment-based messages, not live-traffic ETAs. Nothing is sent during review.
+            </DialogDescription>
+          </DialogHeader>
+
+          {smsReview?.deliveryMode === "mock" && (
+            <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status">
+              Preview mode only: this environment will not send real texts. Production delivery requires configured Twilio credentials.
+            </p>
+          )}
+          {smsReview?.deliveryMode === "unavailable" && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+              Messages can be reviewed, but sending is unavailable until Twilio delivery is configured.
+            </p>
+          )}
+
+          <div className="space-y-4">
+            {smsReview?.messages.map((item) => {
+              const message = smsDrafts[item.jobId] ?? "";
+              const hasOptOutText = message.trim().endsWith(OPT_OUT_SUFFIX.trim());
+              return (
+                <section key={item.jobId} className="rounded-xl border p-4">
+                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold">{item.clientName}</h3>
+                      <p className="text-sm text-muted-foreground">{item.jobTitle} · {formatAppointmentWindow(item.scheduledTime, item.latestStartTime)} · phone ending {item.phoneLast4 || "unknown"}</p>
+                    </div>
+                  </div>
+                  <label htmlFor={`sms-message-${item.jobId}`} className="mb-1.5 block text-sm font-medium">Message</label>
+                  <Textarea
+                    id={`sms-message-${item.jobId}`}
+                    value={message}
+                    maxLength={MAX_SMS_CHARACTERS}
+                    rows={3}
+                    onChange={(event) => setSMSDrafts((current) => ({ ...current, [item.jobId]: event.target.value }))}
+                    aria-describedby={`sms-help-${item.jobId}`}
+                  />
+                  <p id={`sms-help-${item.jobId}`} className={`mt-1 text-xs ${hasOptOutText ? "text-muted-foreground" : "text-red-700"}`}>
+                    {message.length}/{MAX_SMS_CHARACTERS} characters. Keep “{OPT_OUT_SUFFIX.trim()}” at the end.
+                  </p>
+                </section>
+              );
+            })}
+            {smsReview?.messages.length === 0 && (
+              <p className="rounded-lg border bg-muted/40 p-4 text-sm">No stops are eligible for an arrival text. Check the skipped reasons below.</p>
+            )}
+          </div>
+
+          {!!smsReview?.skipped.length && (
+            <section className="rounded-lg border border-amber-200 bg-amber-50/70 p-3" aria-labelledby="sms-skipped-heading">
+              <h3 id="sms-skipped-heading" className="text-sm font-semibold text-amber-950">Not included ({smsReview.skipped.length})</h3>
+              <ul className="mt-2 space-y-1 text-sm text-amber-900">
+                {smsReview.skipped.map((item) => (
+                  <li key={item.jobId}>{item.clientName} — {item.jobTitle}: {item.reason}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSMSReviewOpen(false)} disabled={sendSMS.isPending}>Cancel</Button>
+            <Button
+              onClick={handleSendReviewedTexts}
+              disabled={!reviewedMessagesAreValid || smsReview?.deliveryMode !== "twilio" || sendSMS.isPending}
+            >
+              {sendSMS.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending reviewed texts...</> : `Send ${smsReview?.messages.length ?? 0} reviewed text${smsReview?.messages.length === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageTransition>
   );
 }

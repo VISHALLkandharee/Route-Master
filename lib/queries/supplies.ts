@@ -224,6 +224,7 @@ export function useLogSupplyUsage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: suppliesQueryKey })
+      queryClient.invalidateQueries({ queryKey: ['supply_logs'] })
       toast.success('Supply usage logged successfully')
     },
     onError: (error: Error) =>

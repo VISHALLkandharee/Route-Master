@@ -1,5 +1,5 @@
-const MAX_SMS_CHARACTERS = 160
-const OPT_OUT_SUFFIX = ' Reply STOP to opt out.'
+export const MAX_SMS_CHARACTERS = 160
+export const OPT_OUT_SUFFIX = ' Reply STOP to opt out.'
 
 export interface MessageContext {
   clientName: string
