@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Loader2 } from "lucide-react";
@@ -41,16 +41,10 @@ export function LogUsageSheet({ open, onOpenChange, jobContext = null }: LogUsag
   const [selectedJobId, setSelectedJobId] = useState("");
   const [quantities, setQuantities] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    if (!open) return;
-    setSelectedDate(jobContext?.scheduled_date ?? todayStr);
-    setSelectedJobId(jobContext?.id ?? "");
-    setQuantities({});
-  }, [open, jobContext?.id, jobContext?.scheduled_date, todayStr]);
-
   const { data: supplies } = useSupplies();
-  const { data: jobs } = useJobsByDate(selectedDate);
+  const { data: jobs } = useJobsByDate(jobContext ? null : selectedDate);
   const logUsage = useLogSupplyUsage();
+  const activeJobId = jobContext?.id ?? selectedJobId;
   const stockShortages = (supplies ?? []).filter(
     (supply) => Number(quantities[supply.id] ?? 0) > supply.current_quantity,
   );
@@ -75,7 +69,7 @@ export function LogUsageSheet({ open, onOpenChange, jobContext = null }: LogUsag
   };
 
   const handleSubmit = () => {
-    if (!selectedJobId) return;
+    if (!activeJobId) return;
 
     const entries = Object.entries(quantities)
       .map(([supply_id, qty]) => ({
@@ -87,7 +81,7 @@ export function LogUsageSheet({ open, onOpenChange, jobContext = null }: LogUsag
     if (entries.length === 0) return;
 
     logUsage.mutate(
-      { jobId: selectedJobId, entries },
+      { jobId: activeJobId, entries },
       { onSuccess: () => handleOpenChange(false) },
     );
   };
@@ -225,7 +219,7 @@ export function LogUsageSheet({ open, onOpenChange, jobContext = null }: LogUsag
         <SheetFooter className="px-4">
           <Button
             onClick={handleSubmit}
-            disabled={!selectedJobId || !hasEntries || stockShortages.length > 0 || fractionalCountEntries.length > 0 || excessPrecisionEntries.length > 0 || logUsage.isPending}
+            disabled={!activeJobId || !hasEntries || stockShortages.length > 0 || fractionalCountEntries.length > 0 || excessPrecisionEntries.length > 0 || logUsage.isPending}
             className="w-full"
           >
             {logUsage.isPending ? (
