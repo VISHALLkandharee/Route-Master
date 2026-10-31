@@ -1036,7 +1036,7 @@ export default function RoutesPage() {
           <DialogHeader>
             <DialogTitle>Review arrival messages</DialogTitle>
             <DialogDescription>
-              Check the recipient and scheduled appointment window, edit the wording if needed, then choose whether to send. These are appointment-based messages, not live-traffic ETAs. Nothing is sent during review.
+              Routemaster estimates arrival from the saved route, road travel durations, and planned visit lengths. Estimates do not include live traffic. Check the original appointment and estimate, edit each message as needed, then choose whether to send. Nothing is sent during review.
             </DialogDescription>
           </DialogHeader>
 
@@ -1050,6 +1050,16 @@ export default function RoutesPage() {
               Messages can be reviewed, but sending is unavailable until Twilio delivery is configured.
             </p>
           )}
+          {smsReview?.messages.length && !smsReview.etaAvailable && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">
+              A route-based arrival estimate is unavailable. Drafts use the saved appointment time; check the timing and edit each message before sending.
+            </p>
+          )}
+          {smsReview?.etaAvailable && smsReview.etaStartBasis && (
+            <p className="text-sm text-muted-foreground" role="status">
+              Estimates start from {smsReview.etaStartBasis}. Update your current location and replan first if you have moved since then.
+            </p>
+          )}
 
           <div className="space-y-4">
             {smsReview?.messages.map((item) => {
@@ -1061,6 +1071,14 @@ export default function RoutesPage() {
                     <div>
                       <h3 className="font-semibold">{item.clientName}</h3>
                       <p className="text-sm text-muted-foreground">{item.jobTitle} · {formatAppointmentWindow(item.scheduledTime, item.latestStartTime)} · phone ending {item.phoneLast4 || "unknown"}</p>
+                      {item.appointmentConflict && (
+                        <p className="mt-1 text-sm font-medium text-amber-800">Appointment timing needs confirmation with this client.</p>
+                      )}
+                      {item.estimatedArrivalTime && (
+                        <p className={`mt-1 text-sm font-medium ${item.estimatedArrivalIsLate ? "text-amber-800" : "text-blue-800"}`}>
+                          {item.estimatedArrivalIsLate ? "Running late · " : ""}Estimated arrival around {item.estimatedArrivalTime}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <label htmlFor={`sms-message-${item.jobId}`} className="mb-1.5 block text-sm font-medium">Message</label>

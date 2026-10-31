@@ -7,6 +7,8 @@ export interface MessageContext {
   jobTitle: string
   scheduledTime: string
   latestStartTime?: string | null
+  estimatedArrivalTime?: string | null
+  estimatedArrivalIsLate?: boolean
 }
 
 function formatTime(value: string) {
@@ -40,6 +42,14 @@ export async function generateSMSMessage(context: MessageContext): Promise<strin
   const businessName = context.businessName.trim() || 'Your service provider'
   const service = context.jobTitle.trim() || 'your service'
   const start = formatTime(context.scheduledTime)
+  const estimatedArrival = context.estimatedArrivalTime?.trim()
+  if (estimatedArrival) {
+    const delay = context.estimatedArrivalIsLate
+      ? ` is running late for ${service} and now expects to arrive around ${estimatedArrival}.`
+      : ` expects to arrive for ${service} around ${estimatedArrival}.`
+    return truncateWithOptOut(`Hi ${clientName}, ${businessName}${delay}${OPT_OUT_SUFFIX}`)
+  }
+
   const arrival = context.latestStartTime
     ? `between ${start} and ${formatTime(context.latestStartTime)}`
     : `at ${start}`

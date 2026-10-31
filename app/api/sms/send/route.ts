@@ -6,6 +6,9 @@ import { isSmsDeliveryConfigured, sendSMS } from '@/lib/sms/sender'
 import { rateLimit } from '@/lib/rate-limit'
 import { getSubscriptionAccess } from '@/lib/subscription-access'
 import { isDateOnly } from '@/lib/validation'
+import { getDirections } from '@/lib/ors/directions'
+import { estimateStopArrivals } from '@/lib/time/arrival-estimate'
+import { zonedTimeToUnixSeconds } from '@/lib/time/zoned-time'
 
 interface ClientRecord {
   id: string
@@ -20,9 +23,13 @@ interface JobWithClient {
   scheduled_time: string
   latest_start_time: string | null
   estimated_duration: number
-  status: 'pending' | 'in_progress'
+  status: 'pending' | 'in_progress' | 'completed'
   sms_sent: boolean
   order_index: number
+  latitude: number | null
+  longitude: number | null
+  visit_started_at: string | null
+  completed_at: string | null
   client: ClientRecord | null
 }
 
@@ -91,7 +98,7 @@ export async function POST(request: NextRequest) {
 
   const { data: route, error: routeError } = await supabase
     .from('routes')
-    .select('status, optimization_result')
+    .select('status, optimization_result, start_latitude, start_longitude, started_at')
     .eq('scheduled_date', date)
     .maybeSingle()
   if (routeError) {
@@ -121,7 +128,7 @@ export async function POST(request: NextRequest) {
   // ── Business name ───────────────────────────────────────────
   const { data: profile } = await supabase
     .from('users')
-    .select('full_name, business_name')
+    .select('full_name, business_name, timezone, workday_start')
     .single()
 
   const businessName =
@@ -130,9 +137,9 @@ export async function POST(request: NextRequest) {
   // ── Load jobs in optimized order ────────────────────────────
   const { data: jobs, error: jobsError } = await supabase
     .from('jobs')
-    .select('id, title, scheduled_time, latest_start_time, estimated_duration, status, sms_sent, order_index, client:clients(id, full_name, phone, preferred_contact)')
+    .select('id, title, scheduled_time, latest_start_time, estimated_duration, status, sms_sent, order_index, latitude, longitude, visit_started_at, completed_at, client:clients(id, full_name, phone, preferred_contact)')
     .eq('scheduled_date', date)
-    .in('status', ['pending', 'in_progress'])
+    .in('status', ['pending', 'in_progress', 'completed'])
     .is('deleted_at', null)
     .order('order_index', { ascending: true })
     .limit(51)
@@ -164,9 +171,9 @@ export async function POST(request: NextRequest) {
     const client = job.client
     let reason: string | null = null
 
-    if (job.status === 'in_progress') reason = 'The visit has already started'
+    if (job.status === 'completed') reason = 'The visit is already complete'
+    else if (job.status === 'in_progress') reason = 'The visit has already started'
     else if (job.sms_sent) reason = 'An arrival text was already sent'
-    else if (appointmentConflictJobIds.has(job.id)) reason = 'Confirm the appointment timing before messaging'
     else if (!client || client.preferred_contact !== 'sms') {
       reason = client?.preferred_contact === 'call'
         ? 'Client prefers phone calls'
@@ -180,10 +187,109 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Calculate fresh arrival estimates for the pending route from the best
+  // known starting point. Directions failures never block message review.
+  const etaByJobId = new Map<string, { displayTime: string; isLate: boolean }>()
+  let etaAvailable = false
+  let etaStartBasis: string | null = null
+  const pendingRouteJobs = routeJobs.filter((job) => job.status === 'pending')
+  const allPendingJobsLocated = pendingRouteJobs.length > 0 && pendingRouteJobs.every(
+    (job) => typeof job.latitude === 'number' && typeof job.longitude === 'number',
+  )
+  const timezone = profile?.timezone
+  const workdayStartSeconds = timezone && profile?.workday_start
+    ? zonedTimeToUnixSeconds(date, profile.workday_start, timezone)
+    : null
+
+  if (timezone && workdayStartSeconds !== null && allPendingJobsLocated) {
+    let startLatitude = typeof route.start_latitude === 'number' ? route.start_latitude : null
+    let startLongitude = typeof route.start_longitude === 'number' ? route.start_longitude : null
+    let initialServiceSeconds = 0
+    const activeSegment = route.optimization_result?.activeSegment
+    const activeJob = routeJobs.find((job) => job.status === 'in_progress')
+    const latestCompletedJob = [...routeJobs].reverse().find((job) => job.status === 'completed')
+
+    if (
+      route.status === 'in_progress' && activeSegment &&
+      typeof activeSegment.latitude === 'number' && typeof activeSegment.longitude === 'number'
+    ) {
+      etaStartBasis = 'the last replanned location'
+      startLatitude = activeSegment.latitude
+      startLongitude = activeSegment.longitude
+      if (activeJob && activeSegment.currentStopJobId === activeJob.id && activeJob.visit_started_at) {
+        const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(activeJob.visit_started_at)) / 1000))
+        initialServiceSeconds = Math.max(0, activeJob.estimated_duration * 60 - elapsedSeconds)
+      }
+    } else if (route.status === 'in_progress' && activeJob && activeJob.latitude !== null && activeJob.longitude !== null) {
+      etaStartBasis = 'the active visit location'
+      startLatitude = activeJob.latitude
+      startLongitude = activeJob.longitude
+      if (activeJob.visit_started_at) {
+        const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(activeJob.visit_started_at)) / 1000))
+        initialServiceSeconds = Math.max(0, activeJob.estimated_duration * 60 - elapsedSeconds)
+      }
+    } else if (route.status === 'in_progress' && latestCompletedJob && latestCompletedJob.latitude !== null && latestCompletedJob.longitude !== null) {
+      etaStartBasis = 'the last completed stop'
+      startLatitude = latestCompletedJob.latitude
+      startLongitude = latestCompletedJob.longitude
+    } else if (startLatitude !== null && startLongitude !== null) {
+      etaStartBasis = 'the saved route start'
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const todayParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date())
+    const todayValues = Object.fromEntries(todayParts.map(({ type, value }) => [type, value]))
+    const todayInTimezone = `${todayValues.year}-${todayValues.month}-${todayValues.day}`
+    const departureSeconds = route.status === 'in_progress' || date <= todayInTimezone
+      ? Math.max(workdayStartSeconds, nowSeconds)
+      : workdayStartSeconds
+
+    if (startLatitude !== null && startLongitude !== null) {
+      try {
+        const directions = await getDirections([
+          [startLongitude, startLatitude],
+          ...pendingRouteJobs.map((job) => [job.longitude!, job.latitude!] as [number, number]),
+        ])
+        if (directions && directions.segmentDurationsSeconds.length === pendingRouteJobs.length) {
+          const estimates = estimateStopArrivals({
+            date,
+            timezone,
+            departureSeconds,
+            initialServiceSeconds,
+            stops: pendingRouteJobs.map((job) => ({
+              jobId: job.id,
+              scheduledTime: job.scheduled_time,
+              latestStartTime: job.latest_start_time,
+              estimatedDurationMinutes: job.estimated_duration,
+            })),
+            legDurationsSeconds: directions.segmentDurationsSeconds,
+          })
+          if (estimates) {
+            for (const estimate of estimates) {
+              etaByJobId.set(estimate.jobId, { displayTime: estimate.displayTime, isLate: estimate.isLate })
+            }
+            etaAvailable = estimates.length === pendingRouteJobs.length
+          }
+        }
+      } catch (error) {
+        console.warn('Arrival estimates unavailable; keeping appointment-based drafts.', error)
+      }
+    }
+  }
+
   const previewToken = createHash('sha256').update(JSON.stringify({
     date,
     routeStatus: route.status,
     orderedJobIds,
+    startLatitude: route.start_latitude,
+    startLongitude: route.start_longitude,
+    startedAt: route.started_at,
+    activeSegment: route.optimization_result?.activeSegment ?? null,
     appointmentConflictJobIds: [...appointmentConflictJobIds].sort(),
     jobs: routeJobs.map((job) => ({
       id: job.id,
@@ -193,6 +299,11 @@ export async function POST(request: NextRequest) {
       status: job.status,
       sms_sent: job.sms_sent,
       order_index: job.order_index,
+      latitude: job.latitude,
+      longitude: job.longitude,
+      estimated_duration: job.estimated_duration,
+      visit_started_at: job.visit_started_at,
+      completed_at: job.completed_at,
       client: job.client,
     })),
   })).digest('hex')
@@ -205,12 +316,17 @@ export async function POST(request: NextRequest) {
       phoneLast4: job.client!.phone.replace(/\D/g, '').slice(-4),
       scheduledTime: job.scheduled_time,
       latestStartTime: job.latest_start_time,
+      estimatedArrivalTime: etaByJobId.get(job.id)?.displayTime ?? null,
+      estimatedArrivalIsLate: etaByJobId.get(job.id)?.isLate ?? false,
+      appointmentConflict: appointmentConflictJobIds.has(job.id),
       message: await generateSMSMessage({
         clientName: job.client!.full_name,
         businessName,
         jobTitle: job.title,
         scheduledTime: job.scheduled_time,
         latestStartTime: job.latest_start_time,
+        estimatedArrivalTime: etaByJobId.get(job.id)?.displayTime ?? null,
+        estimatedArrivalIsLate: etaByJobId.get(job.id)?.isLate ?? false,
       }),
     })))
 
@@ -222,6 +338,8 @@ export async function POST(request: NextRequest) {
         : isSmsDeliveryConfigured() ? 'twilio' : 'unavailable',
       messages,
       skipped: skippedDetails,
+      etaAvailable,
+      etaStartBasis: etaAvailable ? etaStartBasis : null,
     })
   }
 
