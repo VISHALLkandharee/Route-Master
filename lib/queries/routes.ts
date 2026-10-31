@@ -291,6 +291,9 @@ export interface SMSPreviewMessage {
   phoneLast4: string
   scheduledTime: string
   latestStartTime: string | null
+  estimatedArrivalTime: string | null
+  estimatedArrivalIsLate: boolean
+  appointmentConflict: boolean
   message: string
 }
 
@@ -298,6 +301,8 @@ export interface SMSPreviewResult {
   previewToken: string
   orderedJobIds: string[]
   deliveryMode: 'twilio' | 'mock' | 'unavailable'
+  etaAvailable: boolean
+  etaStartBasis: string | null
   messages: SMSPreviewMessage[]
   skipped: { jobId: string; clientName: string; jobTitle: string; reason: string }[]
 }

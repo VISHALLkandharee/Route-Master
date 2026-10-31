@@ -3,6 +3,7 @@ const ORS_BASE_URL = 'https://api.heigit.org/openrouteservice'
 export interface DirectionsResult {
   distanceMeters: number
   durationSeconds: number
+  segmentDurationsSeconds: number[]
   geometry: [number, number][] // [longitude, latitude] pairs, in path order
 }
 
@@ -32,9 +33,19 @@ export async function getDirections(
   const feature = data?.features?.[0]
   if (!feature) return null
 
+  const durationSeconds = feature.properties?.summary?.duration
+  if (typeof durationSeconds !== 'number' || !Number.isFinite(durationSeconds) || durationSeconds < 0) return null
+  const segmentDurationsSeconds = Array.isArray(feature.properties?.segments)
+    ? feature.properties.segments.map((segment: { duration?: unknown }) => segment.duration)
+    : []
+  if (segmentDurationsSeconds.some((duration: unknown) => typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0)) {
+    return null
+  }
+
   return {
     distanceMeters: feature.properties.summary.distance,
-    durationSeconds: feature.properties.summary.duration,
+    durationSeconds,
+    segmentDurationsSeconds,
     geometry: feature.geometry.coordinates,
   }
 }
