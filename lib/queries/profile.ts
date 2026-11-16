@@ -133,7 +133,6 @@ export function useCompleteOnboarding() {
   })
 }
 
-
 // ─── Update Profile ───────────────────────────────────────────
 
 interface UpdateProfileInput {
@@ -152,13 +151,18 @@ export function useUpdateProfile() {
 
   return useMutation({
     mutationFn: async (input: UpdateProfileInput) => {
-      const { error: userError } = await supabase.auth.getUser()
-      if (userError) throw new Error('Your session expired. Please log in again.')
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
+      if (userError || !user) {
+        throw new Error('Your session expired. Please log in again.')
+      }
 
       const { error } = await supabase
         .from('users')
         .update(input)
-        .eq('id', (await supabase.auth.getUser()).data.user!.id)
+        .eq('id', user.id)
 
       if (error) throw error
     },
@@ -166,7 +170,10 @@ export function useUpdateProfile() {
       queryClient.invalidateQueries({ queryKey: profileQueryKey })
       toast.success('Profile updated successfully')
     },
-    onError: () => toast.error('Failed to update profile'),
+    onError: (error) => {
+      console.error('Profile update failed:', error)
+      toast.error('Failed to update profile')
+    },
   })
 }
 
@@ -184,30 +191,40 @@ export function useUpdateNotificationPreferences() {
 
   return useMutation({
     mutationFn: async (preferences: NotificationPreferences) => {
-      const { error: userError } = await supabase.auth.getUser()
-      if (userError) throw new Error('Your session expired. Please log in again.')
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
+      if (userError || !user) {
+        throw new Error('Your session expired. Please log in again.')
+      }
 
       const { error } = await supabase
         .from('users')
         .update({ notification_preferences: preferences })
-        .eq('id', (await supabase.auth.getUser()).data.user!.id)
+        .eq('id', user.id)
 
       if (error) throw error
     },
-onMutate: async (preferences) => {
-  await queryClient.cancelQueries({ queryKey: profileQueryKey })
-  const previous = queryClient.getQueryData<UserProfile>(profileQueryKey)
+    onMutate: async (preferences) => {
+      await queryClient.cancelQueries({ queryKey: profileQueryKey })
+      const previous = queryClient.getQueryData<UserProfile>(profileQueryKey)
 
-  queryClient.setQueryData<UserProfile>(profileQueryKey, (old) => {
-    if (!old) return old
-    return { ...old, notification_preferences: preferences }
-  })
+      queryClient.setQueryData<UserProfile>(profileQueryKey, (old) => {
+        if (!old) return old
+        return { ...old, notification_preferences: preferences }
+      })
 
-  return { previous }
-},
-    onError: (_err, _vars, context) => {
-      if (context?.previous)
+      return { previous }
+    },
+    onSuccess: () => {
+      toast.success('Preferences saved')
+    },
+    onError: (error, _vars, context) => {
+      console.error('Notification preferences update failed:', error)
+      if (context?.previous) {
         queryClient.setQueryData(profileQueryKey, context.previous)
+      }
       toast.error('Failed to update preferences')
     },
     onSettled: () => {

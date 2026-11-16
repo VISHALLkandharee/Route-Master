@@ -48,25 +48,27 @@ import { PageTransition } from "@/components/dashboard/page-transition";
 
 // ─── Schema ───────────────────────────────────────────────────
 
-const profileSchema = z.object({
-  full_name: z.string().min(2, "Full name must be at least 2 characters"),
-  phone: z.string().min(7, "Enter a valid phone number"),
-  business_name: z
-    .string()
-    .min(2, "Business name must be at least 2 characters"),
-  business_type: z.enum([
-    "pet_grooming",
-    "pool_cleaning",
-    "auto_detailing",
-    "other",
-  ]),
-  timezone: z.string().min(1, "Please select a timezone"),
-  workday_start: z.string().min(1, "Choose when your workday starts"),
-  workday_end: z.string().min(1, "Choose when your workday ends"),
-}).refine((data) => data.workday_end > data.workday_start, {
-  message: "Workday end must be after workday start",
-  path: ["workday_end"],
-});
+const profileSchema = z
+  .object({
+    full_name: z.string().min(2, "Full name must be at least 2 characters"),
+    phone: z.string().min(7, "Enter a valid phone number"),
+    business_name: z
+      .string()
+      .min(2, "Business name must be at least 2 characters"),
+    business_type: z.enum([
+      "pet_grooming",
+      "pool_cleaning",
+      "auto_detailing",
+      "other",
+    ]),
+    timezone: z.string().min(1, "Please select a timezone"),
+    workday_start: z.string().min(1, "Choose when your workday starts"),
+    workday_end: z.string().min(1, "Choose when your workday ends"),
+  })
+  .refine((data) => data.workday_end > data.workday_start, {
+    message: "Workday end must be after workday start",
+    path: ["workday_end"],
+  });
 
 type ProfileFormData = z.infer<typeof profileSchema>;
 
@@ -77,6 +79,44 @@ const BUSINESS_TYPE_LABELS: Record<string, string> = {
   pool_cleaning: "Pool Cleaning",
   auto_detailing: "Auto Detailing",
   other: "Other",
+};
+
+type NotificationKey = "job_reminders" | "email_summary" | "sms_alerts";
+
+type NotificationItem = {
+  key: NotificationKey;
+  label: string;
+  description: string;
+  // false = the feature is built and the toggle works.
+  // true  = the feature is not built yet; toggle stays disabled.
+  comingSoon: boolean;
+};
+
+const NOTIFICATION_ITEMS: NotificationItem[] = [
+  {
+    key: "job_reminders",
+    label: "Job Reminders",
+    description: "Get reminded about upcoming jobs scheduled for today",
+    comingSoon: true,
+  },
+  {
+    key: "email_summary",
+    label: "Morning Job Agenda",
+    description: "Get your day's scheduled jobs by email every morning",
+    comingSoon: false,
+  },
+  {
+    key: "sms_alerts",
+    label: "SMS Alerts",
+    description: "Receive SMS notifications about job cancellations or changes",
+    comingSoon: true,
+  },
+];
+
+const DEFAULT_NOTIFICATION_PREFS = {
+  email_summary: true,
+  sms_alerts: false,
+  job_reminders: true,
 };
 
 function getTimezoneList(currentTimezone: string): string[] {
@@ -123,16 +163,19 @@ function Toggle({
   checked,
   onChange,
   disabled,
+  label,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  label: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full
@@ -227,13 +270,14 @@ function SettingsPageContent() {
     updateProfile.mutate(data);
   };
 
-  const handleNotificationToggle = (key: string, value: boolean) => {
-    const current = profile?.notification_preferences ?? {
-      email_summary: true,
-      sms_alerts: false,
-      job_reminders: true,
-    };
-    updateNotifications.mutate({ ...current, [key]: value });
+  // Saved preferences, falling back to the database defaults.
+  const notifPrefs = {
+    ...DEFAULT_NOTIFICATION_PREFS,
+    ...(profile?.notification_preferences ?? {}),
+  };
+
+  const handleNotificationToggle = (key: NotificationKey, value: boolean) => {
+    updateNotifications.mutate({ ...notifPrefs, [key]: value });
   };
 
   const handleDeleteAccount = async () => {
@@ -248,9 +292,11 @@ function SettingsPageContent() {
       await supabase.auth.signOut();
       toast.success("Account deleted successfully.");
       router.push("/");
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error(
-        err.message || "Failed to delete account. Please contact support.",
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to delete account. Please contact support.",
       );
       setIsDeleting(false);
     }
@@ -260,12 +306,6 @@ function SettingsPageContent() {
     await supabase.auth.signOut();
     toast.success("Signed out successfully");
     router.push("/login");
-  };
-
-  const notifPrefs = profile?.notification_preferences ?? {
-    email_summary: true,
-    sms_alerts: false,
-    job_reminders: true,
   };
 
   return (
@@ -282,7 +322,8 @@ function SettingsPageContent() {
               We couldn’t verify your plan right now
             </p>
             <p className="mt-1 text-xs text-amber-800">
-              Your data is safe. Refresh this page in a moment or contact support if access does not return.
+              Your data is safe. Refresh this page in a moment or contact
+              support if access does not return.
             </p>
           </motion.div>
         )}
@@ -495,17 +536,29 @@ function SettingsPageContent() {
 
                   <div className="space-y-1.5">
                     <Label htmlFor="workday_start">Workday starts</Label>
-                    <Input id="workday_start" type="time" {...register("workday_start")} />
+                    <Input
+                      id="workday_start"
+                      type="time"
+                      {...register("workday_start")}
+                    />
                     {errors.workday_start && (
-                      <p className="text-xs text-red-500">{errors.workday_start.message}</p>
+                      <p className="text-xs text-red-500">
+                        {errors.workday_start.message}
+                      </p>
                     )}
                   </div>
 
                   <div className="space-y-1.5">
                     <Label htmlFor="workday_end">Workday ends</Label>
-                    <Input id="workday_end" type="time" {...register("workday_end")} />
+                    <Input
+                      id="workday_end"
+                      type="time"
+                      {...register("workday_end")}
+                    />
                     {errors.workday_end && (
-                      <p className="text-xs text-red-500">{errors.workday_end.message}</p>
+                      <p className="text-xs text-red-500">
+                        {errors.workday_end.message}
+                      </p>
                     )}
                   </div>
 
@@ -548,29 +601,7 @@ function SettingsPageContent() {
                 description="Choose what you want to be notified about"
               />
               <div className="space-y-5">
-                {[
-                  {
-                    key: "job_reminders",
-                    label: "Job Reminders",
-                    description:
-                      "Get reminded about upcoming jobs scheduled for today",
-                    comingSoon: true,
-                  },
-                  {
-                    key: "email_summary",
-                    label: "Daily Email Summary",
-                    description:
-                      "Receive a summary of the day's completed jobs by email",
-                    comingSoon: true,
-                  },
-                  {
-                    key: "sms_alerts",
-                    label: "SMS Alerts",
-                    description:
-                      "Receive SMS notifications about job cancellations or changes",
-                    comingSoon: true,
-                  },
-                ].map((item, i) => (
+                {NOTIFICATION_ITEMS.map((item, i) => (
                   <div key={item.key}>
                     {i > 0 && <Separator className="mb-5" />}
                     <div className="flex items-center justify-between gap-4">
@@ -590,15 +621,21 @@ function SettingsPageContent() {
                         </p>
                       </div>
                       <Toggle
-                        checked={false}
-                        onChange={() => {}}
-                        disabled={true}
+                        label={item.label}
+                        checked={item.comingSoon ? false : notifPrefs[item.key]}
+                        onChange={(value) =>
+                          handleNotificationToggle(item.key, value)
+                        }
+                        disabled={
+                          item.comingSoon ||
+                          isLoading ||
+                          updateNotifications.isPending
+                        }
                       />
                     </div>
                   </div>
                 ))}
               </div>
-              \\
             </CardContent>
           </Card>
         </motion.div>
@@ -629,7 +666,6 @@ function SettingsPageContent() {
             </CardContent>
           </Card>
 
-          {/* Subscription */}
           {/* Subscription */}
           <Card className="border-gray-100">
             <CardContent className="p-6">
